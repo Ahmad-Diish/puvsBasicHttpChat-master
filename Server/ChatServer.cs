@@ -5,30 +5,21 @@ using Microsoft.AspNetCore.Http;
 
 namespace Server;
 
-/// <summary>
+
 /// This is a very basic implementation of a chat server.
 /// There are lot of things to improve...
-/// </summary>
 public class ChatServer
 {
-    /// <summary>
     /// The message history
-    /// </summary>
     private readonly ConcurrentQueue<ChatMessage> messageQueue = new();
 
-    /// <summary>
     /// All the chat clients
-    /// </summary>
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ChatMessage>> waitingClients = new();
 
-    /// <summary>
     /// The lock object for concurrency
-    /// </summary>
     private readonly object lockObject = new();
 
-    /// <summary>
     /// Configures the web services.
-    /// </summary>
     /// <param name="app">The application.</param>
     public void Configure(IApplicationBuilder app)
     {
