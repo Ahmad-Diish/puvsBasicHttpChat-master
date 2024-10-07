@@ -3,27 +3,21 @@ using Data;
 
 namespace Client;
 
-/// <summary>
+
 /// A client for the simple web server
-/// </summary>
 public class ChatClient
 {
-    /// <summary>
+
     /// The HTTP client to be used throughout
-    /// </summary>
     private readonly HttpClient httpClient;
 
-    /// <summary>
     /// The alias of the user
-    /// </summary>
     private readonly string alias;
 
-    /// <summary>
+
     /// The cancellation token source for the listening task
-    /// </summary>
     readonly CancellationTokenSource cancellationTokenSource = new();
 
-    /// <summary>
     /// Initializes a new instance of the <see cref="ChatClient"/> class.
     /// </summary>
     /// <param name="alias">The alias of the user.</param>
@@ -35,9 +29,8 @@ public class ChatClient
         this.httpClient.BaseAddress = serverUri;
     }
 
-    /// <summary>
+
     /// Connects this client to the server.
-    /// </summary>
     /// <returns>True if the connection could be established; otherwise False</returns>
     public async Task<bool> Connect()
     {
@@ -48,9 +41,7 @@ public class ChatClient
         return response.IsSuccessStatusCode;
     }
 
-    /// <summary>
     /// Sends a new message into the chat.
-    /// </summary>
     /// <param name="content">The message content as text.</param>
     /// <returns>True if the message could be send; otherwise False</returns>
     public async Task<bool> SendMessage(string content)
@@ -62,9 +53,7 @@ public class ChatClient
         return response.IsSuccessStatusCode;
     }
 
-    /// <summary>
     /// Listens for messages until this process is cancelled by the user.
-    /// </summary>
     public async Task ListenForMessages()
     {
         var cancellationToken = this.cancellationTokenSource.Token;
@@ -91,10 +80,8 @@ public class ChatClient
             }
         }
     }
-
-    /// <summary>
     /// Cancels the loop for listening for messages.
-    /// </summary>
+
     public void CancelListeningForMessages()
     {
         // signal the cancellation request
@@ -104,9 +91,8 @@ public class ChatClient
     // Enabled the user to receive new messages. The assigned delegated is called when a new message is received.
     public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
 
-    /// <summary>
+  
     /// Called when a message was received and signal this to the user using the MessageReceived event.
-    /// </summary>
     /// <param name="sender">The alias of the sender.</param>
     /// <param name="message">The containing message as text.</param>
     protected virtual void OnMessageReceived(string sender, string message)
