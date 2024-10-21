@@ -178,7 +178,7 @@ namespace Client
         /// <param name="e">The <see cref="MessageReceivedEventArgs"/> instance containing the event data.</param>
         static void MessageReceivedHandler(object? sender, MessageReceivedEventArgs e)
         {
-            Console.WriteLine($"\nNeue Nachricht von {e.Sender}: {e.Message}");
+            Console.WriteLine($"\nNeue Nachricht von {e.Sender}: {e.Message}  [{e.Timestamp}]");
         }
     }
 }

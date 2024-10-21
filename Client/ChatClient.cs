@@ -47,7 +47,7 @@ public class ChatClient
     public async Task<bool> SendMessage(string content)
     {
         // creates the message and sends it to the server
-        var message = new ChatMessage { Sender = this.alias, Content = content };
+        var message = new ChatMessage { Sender = this.alias, Content = content, Timestamp = DateTime.Now };
         var response = await this.httpClient.PostAsJsonAsync("/messages", message);
 
         // Speichere die Nachricht in der Datei
@@ -75,13 +75,13 @@ public class ChatClient
                     // Speichere empfangene Nachrichten in der Datei
                     SaveMessageToFile(message);
 
-                    this.OnMessageReceived(message.Sender, message.Content);
+                    this.OnMessageReceived(message.Sender, message.Content, message.Timestamp);
                 }
             }
             catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 // catch the cancellation 
-                this.OnMessageReceived("Me", "Leaving the chat");
+                this.OnMessageReceived("Me", "Leaving the chat", DateTime.Now);
                 break;
             }
         }
@@ -101,10 +101,16 @@ public class ChatClient
     /// Called when a message was received and signal this to the user using the MessageReceived event.
     /// <param name="sender">The alias of the sender.</param>
     /// <param name="message">The containing message as text.</param>
-    protected virtual void OnMessageReceived(string sender, string message)
+    protected virtual void OnMessageReceived(string sender, string message, DateTime timestamp)
     {
-        this.MessageReceived?.Invoke(this, new MessageReceivedEventArgs { Sender = sender, Message = message });
+        this.MessageReceived?.Invoke(this, new MessageReceivedEventArgs
+        {
+            Sender = sender,
+            Message = message,
+            Timestamp = timestamp
+        });
     }
+
 
 
     // Chat-Verläufe 
