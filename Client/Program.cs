@@ -15,9 +15,7 @@ namespace Client
             var sender = Console.ReadLine() ?? Guid.NewGuid().ToString();
             Console.WriteLine();
 
-            // create a new client and connect the event handler for the received messages
-            var client = new ChatClient(sender, serverUri);
-            client.MessageReceived += MessageReceivedHandler;
+
 
             // Benutzerfreundliche Benutzeroberfläche
             while (true)
@@ -29,6 +27,10 @@ namespace Client
                 Console.WriteLine("4. Chat schließen");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
+
+                // create a new client and connect the event handler for the received messages
+                var client = new ChatClient(sender, serverUri);
+                client.MessageReceived += MessageReceivedHandler;
 
                 if (choice == "1")
                 {
