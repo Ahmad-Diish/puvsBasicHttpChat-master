@@ -1,173 +1,267 @@
 ﻿using System.Net.Http.Json;
 using Data;
+using System.Net;
+using System.Text.Json;
 
 namespace Client;
 
-
+/// <summary>
 /// A client for the simple web server
+/// </summary>
 public class ChatClient
 {
-
-    /// The HTTP client to be used throughout
     private readonly HttpClient httpClient;
-
-    /// The alias of the user
     private readonly string alias;
+    public ConsoleColor userColor { get; private set; }
+    private readonly CancellationTokenSource cancellationTokenSource = new();
+    private static readonly string COLOR_FILE_PATH = "user_colors.json";
 
-
-    /// The cancellation token source for the listening task
-    readonly CancellationTokenSource cancellationTokenSource = new();
-
-    /// Initializes a new instance of the <see cref="ChatClient"/> class.
-    /// </summary>
-    /// <param name="alias">The alias of the user.</param>
-    /// <param name="serverUri">The server URI.</param>
     public ChatClient(string alias, Uri serverUri)
     {
         this.alias = alias;
         this.httpClient = new HttpClient();
         this.httpClient.BaseAddress = serverUri;
+        this.userColor = LoadOrGenerateColor();
     }
 
+    private ConsoleColor LoadOrGenerateColor()
+    {
+        var colorMapping = LoadColorMapping();
 
-    /// Connects this client to the server.
-    /// <returns>True if the connection could be established; otherwise False</returns>
+        if (colorMapping.TryGetValue(alias, out string? savedColor))
+        {
+            return (ConsoleColor)Enum.Parse(typeof(ConsoleColor), savedColor);
+        }
+
+        var newColor = GenerateNewColor();
+        colorMapping[alias] = newColor.ToString();
+        SaveColorMapping(colorMapping);
+
+        return newColor;
+    }
+
+    private ConsoleColor GenerateNewColor()
+    {
+        var random = new Random();
+        List<ConsoleColor> excludedColors = new() { ConsoleColor.White, ConsoleColor.Black, ConsoleColor.Gray };
+
+        var usedColors = LoadColorMapping().Values
+            .Select(c => (ConsoleColor)Enum.Parse(typeof(ConsoleColor), c))
+            .ToList();
+
+        var availableColors = Enum.GetValues(typeof(ConsoleColor))
+            .Cast<ConsoleColor>()
+            .Except(excludedColors)
+            .Except(usedColors)
+            .ToList();
+
+        if (!availableColors.Any())
+        {
+            availableColors = Enum.GetValues(typeof(ConsoleColor))
+                .Cast<ConsoleColor>()
+                .Except(excludedColors)
+                .ToList();
+        }
+
+        return availableColors[random.Next(availableColors.Count)];
+    }
+
+    private Dictionary<string, string> LoadColorMapping()
+    {
+        if (File.Exists(COLOR_FILE_PATH))
+        {
+            try
+            {
+                string json = File.ReadAllText(COLOR_FILE_PATH);
+                return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+                    ?? new Dictionary<string, string>();
+            }
+            catch
+            {
+                return new Dictionary<string, string>();
+            }
+        }
+        return new Dictionary<string, string>();
+    }
+
+    private void SaveColorMapping(Dictionary<string, string> colorMapping)
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(colorMapping);
+            File.WriteAllText(COLOR_FILE_PATH, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warnung: Farbzuordnung konnte nicht gespeichert werden: {ex.Message}");
+        }
+    }
+
     public async Task<bool> Connect()
     {
-        // create and send a welcome message
-        var message = new ChatMessage { Sender = this.alias, Content = $"Hi, I joined the chat!" };
+        var message = new ChatMessage { Sender = this.alias, SenderColor = this.userColor, Content = $"Hallo, ich habe mich dem Chat angeschlossen!" };
         var response = await this.httpClient.PostAsJsonAsync("/messages", message);
 
         return response.IsSuccessStatusCode;
     }
 
-    /// Sends a new message into the chat.
-    /// <param name="content">The message content as text.</param>
-    /// <returns>True if the message could be send; otherwise False</returns>
+    public async Task<HttpStatusCode> Check()
+    {
+        var message = new ChatMessage { Sender = this.alias, SenderColor = this.userColor, Content = "Hi hier Methode zur Überprüfung des Namens und der Farbe der Registrierung" };
+        var response = await this.httpClient.PostAsJsonAsync($"/messages/id", message);
+
+        return response.StatusCode;
+    }
+
     public async Task<bool> SendMessage(string content)
     {
-        // creates the message and sends it to the server
-        var message = new ChatMessage { Sender = this.alias, Content = content, Timestamp = DateTime.Now };
+        var message = new ChatMessage
+        {
+            Sender = this.alias,
+            SenderColor = this.userColor,
+            Content = content,
+            Timestamp = DateTime.Now
+        };
         var response = await this.httpClient.PostAsJsonAsync("/messages", message);
 
-        // Speichere die Nachricht in der Datei
-        // SaveMessageToFile(message);
+        if (response.IsSuccessStatusCode)
+        {
+            Console.WriteLine("Nachricht erfolgreich gesendet.");
+            await Task.Delay(100); // Add delay to ensure order in console output
+        }
 
         return response.IsSuccessStatusCode;
     }
 
-    /// Listens for messages until this process is cancelled by the user.
+
     public async Task ListenForMessages()
     {
         var cancellationToken = this.cancellationTokenSource.Token;
 
-        // run until the user request the cancellation
         while (true)
         {
             try
             {
-                // listening for messages. possibly waits for a long time.
-                var message = await this.httpClient.GetFromJsonAsync<ChatMessage>($"/messages?id={this.alias}", cancellationToken);
+                var message = await this.httpClient.GetFromJsonAsync<ChatMessage>(
+                    $"/messages?id={this.alias}&usercolor={this.userColor}",
+                    cancellationToken);
 
-                // if a new message was received notify the user
                 if (message != null)
                 {
-                    // Speichere empfangene Nachrichten in der Datei
-                    SaveMessageToFile(message);
+                    if (!IsMessageDuplicate(message))
+                    {
+                        SaveMessageToFile(message);
+                    }
 
-                    this.OnMessageReceived(message.Sender, message.Content, message.Timestamp);
+                    // Display the received message with a short delay to avoid overlapping output
+                    await Task.Delay(50);
+                    this.OnMessageReceived(message.Sender, message.Content, message.Timestamp, message.SenderColor);
                 }
             }
             catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                // catch the cancellation 
-                this.OnMessageReceived("Me", "Leaving the chat", DateTime.Now);
+                Console.WriteLine("Verbindung zum Chat getrennt.");
                 break;
             }
         }
     }
-    /// Cancels the loop for listening for messages.
+
 
     public void CancelListeningForMessages()
     {
-        // signal the cancellation request
         this.cancellationTokenSource.Cancel();
     }
 
-    // Enabled the user to receive new messages. The assigned delegated is called when a new message is received.
     public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
 
-
-    /// Called when a message was received and signal this to the user using the MessageReceived event.
-    /// <param name="sender">The alias of the sender.</param>
-    /// <param name="message">The containing message as text.</param>
-    protected virtual void OnMessageReceived(string sender, string message, DateTime timestamp)
+    protected virtual void OnMessageReceived(string sender, string message, DateTime timestamp, ConsoleColor usernamecolor)
     {
         this.MessageReceived?.Invoke(this, new MessageReceivedEventArgs
         {
             Sender = sender,
             Message = message,
-            Timestamp = timestamp
+            Timestamp = timestamp,
+            UsernameColor = usernamecolor
         });
     }
 
+    private readonly object fileLock = new();
 
-
-    // Chat-Verläufe 
-
-    /// <summary>
-    /// Saves the chat messages to a file within the "Verlauf" folder to preserve the chat history.
-    /// </summary>
-    /// <param name="message">The chat message to be saved.</param>
-    private void SaveMessageToFile(ChatMessage message)
+    private bool IsMessageDuplicate(ChatMessage message)
     {
-        // Define the folder and file path for storing the chat history
         string folderPath = "Verlauf";
         string logFilePath = Path.Combine(folderPath, $"{this.alias}_chat_history.txt");
 
-        // Ensure the "Verlauf" folder exists; if not, create it
-        if (!Directory.Exists(folderPath))
+        if (!File.Exists(logFilePath))
         {
-            Directory.CreateDirectory(folderPath);
+            return false;
         }
 
-        // Using StreamWriter to append the message to the chat history file
-        using (StreamWriter writer = new StreamWriter(logFilePath, true))
+        lock (fileLock)
         {
-            writer.WriteLine($"{message.Timestamp}: {message.Sender}: {message.Content}");
+            using (var fileStream = new FileStream(logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(fileStream))
+            {
+                var lastLine = reader.ReadToEnd().Split(Environment.NewLine).LastOrDefault();
+                return lastLine != null && lastLine.Contains($"{message.Timestamp}: {message.Sender}: {message.Content}");
+            }
         }
     }
 
-    /// <summary>
-    /// Deletes the chat history file for the current user.
-    /// </summary>
+    private void SaveMessageToFile(ChatMessage message)
+    {
+        string folderPath = "Verlauf";
+        string logFilePath = Path.Combine(folderPath, $"{this.alias}_chat_history.txt");
+
+        lock (fileLock)
+        {
+            try
+            {
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+
+                using (var fileStream = new FileStream(logFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(fileStream))
+                {
+                    writer.WriteLine($"{message.Timestamp}: {message.Sender}: {message.Content}");
+                }
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"Fehler beim Speichern der Nachricht: {ex.Message}");
+            }
+        }
+    }
+
     public void DeleteChatHistory()
     {
         string folderPath = "Verlauf";
         string logFilePath = Path.Combine(folderPath, $"{this.alias}_chat_history.txt");
 
-        if (File.Exists(logFilePath))
+        try
         {
-            File.Delete(logFilePath);
-            Console.WriteLine($"Chat-Verlauf für Benutzer '{this.alias}' erfolgreich gelöscht.");
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
+                Console.WriteLine($"Chat-Verlauf für Benutzer '{this.alias}' erfolgreich gelöscht.");
+            }
+            else
+            {
+                Console.WriteLine($"Kein Chat-Verlauf für Benutzer '{this.alias}' gefunden.");
+            }
         }
-        else
+        catch (IOException ex)
         {
-            Console.WriteLine($"Kein Chat-Verlauf für Benutzer '{this.alias}' gefunden.");
+            Console.WriteLine($"Fehler beim Löschen des Chat-Verlaufs: {ex.Message}");
         }
     }
 
-
-    /// <summary>
-    /// Loads and displays the chat messages from a specific date range (ignoring time).
-    /// </summary>
-    /// <param name="startDate">The start date of the range.</param>
-    /// <param name="endDate">The end date of the range.</param>
     public async Task LoadMessagesByDateRange(DateTime startDate, DateTime endDate)
     {
         List<ChatMessage> messages = await Task.Run(() => LoadPreviousMessagesFromFile());
 
-        // Filter messages based on the date range, ignoring the time part
         var filteredMessages = messages
             .Where(m => m.Timestamp.Date >= startDate.Date && m.Timestamp.Date <= endDate.Date)
             .ToList();
@@ -177,7 +271,6 @@ public class ChatClient
             Console.WriteLine($"\nChatverlauf vom {startDate.ToShortDateString()} bis {endDate.ToShortDateString()}:");
             foreach (var message in filteredMessages)
             {
-                // Display only the date part of the timestamp
                 Console.WriteLine($"{message.Timestamp.Date.ToShortDateString()}: {message.Sender}: {message.Content}");
             }
         }
@@ -187,65 +280,61 @@ public class ChatClient
         }
     }
 
-
-
-    /// <summary>
-    /// Loads and displays the previously saved chat messages from the file asynchronously.
-    /// </summary>
     public async Task LoadAndDisplayPreviousMessages()
     {
         List<ChatMessage> messages = await Task.Run(() => LoadPreviousMessagesFromFile());
 
         if (messages.Count > 0)
         {
-            Console.WriteLine("\nPrevious chat history:");
+            Console.WriteLine("\nVorheriger Chat-Verlauf:");
             foreach (var message in messages)
             {
-                // Displaying each message in the format of timestamp, sender, and content
                 Console.WriteLine($"{message.Timestamp}: {message.Sender}: {message.Content}");
             }
         }
         else
         {
-            // If no messages are found in the chat history file
-            Console.WriteLine("No chat history available.");
+            Console.WriteLine("Kein Chat-Verlauf verfügbar.");
         }
     }
 
-    /// <summary>
-    /// Reads the chat history from the file located in the "Verlauf" folder.
-    /// </summary>
-    /// <returns>A list of chat messages.</returns>
     private List<ChatMessage> LoadPreviousMessagesFromFile()
     {
         List<ChatMessage> messages = new List<ChatMessage>();
-
-        // Define the folder and file path for reading the chat history
         string folderPath = "Verlauf";
         string logFilePath = Path.Combine(folderPath, $"{this.alias}_chat_history.txt");
 
-        // Checking if the chat history file exists
-        if (File.Exists(logFilePath))
+        try
         {
-            // Reading each line of the file and extracting the timestamp, sender, and message content
-            string[] lines = File.ReadAllLines(logFilePath);
-            foreach (string line in lines)
+            if (File.Exists(logFilePath))
             {
-                string[] parts = line.Split(new[] { ": " }, 3, StringSplitOptions.None);
-                if (parts.Length == 3)
+                using (var fileStream = new FileStream(logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(fileStream))
                 {
-                    ChatMessage message = new ChatMessage
+                    string[] lines = reader.ReadToEnd().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (string line in lines)
                     {
-                        Timestamp = DateTime.Parse(parts[0]),
-                        Sender = parts[1],
-                        Content = parts[2]
-                    };
-                    messages.Add(message);
+                        string[] parts = line.Split(new[] { ": " }, 3, StringSplitOptions.None);
+                        if (parts.Length == 3)
+                        {
+                            ChatMessage message = new ChatMessage
+                            {
+                                Timestamp = DateTime.Parse(parts[0]),
+                                Sender = parts[1],
+                                Content = parts[2],
+                                SenderColor = this.userColor
+                            };
+                            messages.Add(message);
+                        }
+                    }
                 }
             }
+        }
+        catch (IOException ex)
+        {
+            Console.WriteLine($"Fehler beim Laden des Chat-Verlaufs: {ex.Message}");
         }
 
         return messages;
     }
-
 }

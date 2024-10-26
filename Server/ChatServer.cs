@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Http;
 
 namespace Server;
 
-
 /// This is a very basic implementation of a chat server.
 /// There are lot of things to improve...
 public class ChatServer
@@ -15,6 +14,11 @@ public class ChatServer
 
     /// All the chat clients
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ChatMessage>> waitingClients = new();
+
+    /// <summary>
+    /// All the chat clients to check if the name or color of user is already taken or not 
+    /// </summary>
+    private readonly Dictionary<string, ConsoleColor> usernameColors = new();
 
     /// The lock object for concurrency
     private readonly object lockObject = new();
@@ -27,6 +31,34 @@ public class ChatServer
 
         app.UseEndpoints(endpoints =>
         {
+            endpoints.MapPost("/messages/id", async context =>
+            {
+                var message = await context.Request.ReadFromJsonAsync<ChatMessage>();
+
+                if (string.IsNullOrEmpty(message?.Sender))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    Console.WriteLine("Name ist erforderlich.");
+                    return;
+                }
+
+                if (usernameColors.ContainsKey(message.Sender) || usernameColors.ContainsValue(message.SenderColor))
+                {
+                    context.Response.StatusCode = StatusCodes.Status409Conflict;
+                    Console.WriteLine("Der 'Name' oder 'Farbe' des Benutzers ist bereits vergeben.");
+                    await context.Response.WriteAsync("Name ist bereits vergeben.");
+                }
+                else
+                {
+                    usernameColors[message.Sender] = message.SenderColor;
+                    Console.WriteLine($"Client '{message.Sender}' zur UsernameColorDict hinzugefügt");
+                    await context.Response.WriteAsync("Erfolgreich registriert");
+                }
+            });
+        });
+
+        app.UseEndpoints(endpoints =>
+        {
             // The endpoint to register a client to the server to subsequently receive the next message
             // This endpoint utilizes the Long-Running-Requests pattern.
             endpoints.MapGet("/messages", async context =>
@@ -34,10 +66,9 @@ public class ChatServer
                 var tcs = new TaskCompletionSource<ChatMessage>();
 
                 context.Request.Query.TryGetValue("id", out var rawId);
-
                 var id = rawId.ToString();
 
-                Console.WriteLine($"Client '{id}' registered");
+                Console.WriteLine($"Client '{id}' registriert");
 
                 // register a client to receive the next message
                 var error = true;
@@ -47,31 +78,28 @@ public class ChatServer
                     {
                         if (this.waitingClients.TryRemove(id, out _))
                         {
-                            Console.WriteLine($"Client '{id}' removed from waiting clients");
+                            Console.WriteLine($"Client '{id}' von wartenden Clients entfernt");
                         }
                     }
 
                     if (this.waitingClients.TryAdd(id, tcs))
                     {
-                        Console.WriteLine($"Client '{id}' added to waiting clients");
+                        Console.WriteLine($"Client '{id}' zu wartenden Clients hinzugefügt");
                         error = false;
                     }
-
-                    // You could replace all of the above with just one line...
-                    //this.waitingClients.AddOrUpdate(id.ToString(), tcs, (_, _) => tcs);
                 }
 
                 // if anything went wrong send out an error message
                 if (error)
                 {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                    await context.Response.WriteAsync("Internal server error.");
+                    await context.Response.WriteAsync("Interner Serverfehler.");
                 }
 
                 // otherwise wait for the next message broadcast
                 var message = await tcs.Task;
 
-                Console.WriteLine($"Client '{id}' received message: {message.Content}");
+                Console.WriteLine($"Client '{id}' erhielt Nachricht: {message.Content}");
 
                 // send out the next message
                 await context.Response.WriteAsJsonAsync(message);
@@ -85,10 +113,10 @@ public class ChatServer
                 if (message == null)
                 {
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                    await context.Response.WriteAsync("Message invalid.");
+                    await context.Response.WriteAsync("Nachricht ungültig.");
                 }
 
-                Console.WriteLine($"Received message from client: {message!.Content}");
+                Console.WriteLine($"Nachricht vom Client empfangen: {message!.Content}");
 
                 // maintain the chat history
                 this.messageQueue.Enqueue(message);
@@ -98,18 +126,18 @@ public class ChatServer
                 {
                     foreach (var (id, client) in this.waitingClients)
                     {
-                        Console.WriteLine($"Broadcasting to client '{id}'");
+                        Console.WriteLine($"Broadcasting an Client '{id}'");
 
-                        // possbile memory leak as the 'dead' clients are never removed from the list
+                        // possible memory leak as the 'dead' clients are never removed from the list
                         client.TrySetResult(message);
                     }
                 }
 
-                Console.WriteLine($"Broadcasted message to all clients: {message.Content}");
+                Console.WriteLine($"Nachricht an alle Clients gesendet: {message.Content}");
 
                 // confirm that the new message was successfully processed
                 context.Response.StatusCode = StatusCodes.Status201Created;
-                await context.Response.WriteAsync("Message received and processed.");
+                await context.Response.WriteAsync("Nachricht empfangen und verarbeitet.");
             });
         });
     }
