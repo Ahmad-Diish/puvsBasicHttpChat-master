@@ -22,27 +22,11 @@ namespace Client
             var sender = Console.ReadLine() ?? Guid.NewGuid().ToString();
             Console.WriteLine();
 
-            // Create the main client instance
-            client = new ChatClient(sender, serverUri);
+            // create a new client and connect the event handler for the received messages
+            var client = new ChatClient(sender, serverUri);
+            client.MessageReceived += MessageReceivedHandler;
 
-            // Check for name and color conflicts
-            var error = false;
-            HttpStatusCode checkResult = await client.Check();
-
-            if (checkResult == HttpStatusCode.BadRequest)
-            {
-                Console.WriteLine("Ein Name ist erforderlich.");
-                error = true;
-            }
-            else if (checkResult == HttpStatusCode.Conflict)
-            {
-                Console.WriteLine("Dieser Benutzername ist bereits vergeben. Bitte versuchen Sie es mit einem anderen Namen.");
-                Environment.Exit(0);
-            }
-
-            if (error) return;
-
-            // Main menu loop
+            // Benutzerfreundliche Benutzeroberfläche
             while (true)
             {
                 Console.ResetColor();
@@ -53,6 +37,10 @@ namespace Client
                 Console.WriteLine("4. Chat schließen");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
+
+                // create a new client and connect the event handler for the received messages
+                var client = new ChatClient(sender, serverUri);
+                client.MessageReceived += MessageReceivedHandler;
 
                 // Create new client instance only when starting a chat
                 if (choice == "1" || choice == "2")
