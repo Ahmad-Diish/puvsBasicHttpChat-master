@@ -172,6 +172,32 @@ public class ChatClient
         this.cancellationTokenSource.Cancel();
     }
 
+    public async Task Disconnect()
+    {
+        try
+        {
+            var response = await this.httpClient.DeleteAsync($"/users/{Uri.EscapeDataString(this.alias)}");
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("Erfolgreich vom Server abgemeldet.");
+            }
+            else
+            {
+                Console.WriteLine("Abmeldung vom Server fehlgeschlagen.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Fehler während der Trennung: {ex.Message}");
+        }
+        finally
+        {
+            this.CancelListeningForMessages();
+        }
+    }
+
+
+
     public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
 
     protected virtual void OnMessageReceived(string sender, string message, DateTime timestamp, ConsoleColor usernamecolor)

@@ -55,8 +55,31 @@ public class ChatServer
                     await context.Response.WriteAsync("Erfolgreich registriert");
                 }
             });
-        });
 
+            // Add new endpoint for user disconnection
+            endpoints.MapDelete("/users/{username}", context =>
+            {
+                var username = context.Request.RouteValues["username"]?.ToString();
+
+                if (string.IsNullOrEmpty(username))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return context.Response.WriteAsync("Benutzername ist erforderlich.");
+                }
+
+                lock (lockObject)
+                {
+                    if (usernameColors.Remove(username))
+                    {
+                        Console.WriteLine($"Benutzer '{username}' aus UsernameColorDict entfernt");
+                        return context.Response.WriteAsync("Benutzer erfolgreich abgemeldet");
+                    }
+                }
+
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return context.Response.WriteAsync("Benutzer nicht gefunden");
+            });
+        });
         app.UseEndpoints(endpoints =>
         {
             // The endpoint to register a client to the server to subsequently receive the next message

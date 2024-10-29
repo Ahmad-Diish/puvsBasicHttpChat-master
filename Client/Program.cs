@@ -96,6 +96,7 @@ namespace Client
                 Console.WriteLine("Verbindung konnte nicht hergestellt werden.");
                 return;
             }
+            
 
             var listenTask = client.ListenForMessages();
             Console.WriteLine("Sie sind nun verbunden. Sie können Nachrichten senden.");
@@ -114,12 +115,13 @@ namespace Client
                     Console.ResetColor();
                 }
 
+
                 if (content.ToLower() == "exit")
                 {
-                    client.CancelListeningForMessages();
+                    await client.Disconnect(); // Use the new Disconnect method instead of just cancelling
                     break;
                 }
-
+                Console.WriteLine($"Sending message: {content}");
                 if (!string.IsNullOrWhiteSpace(content))
                 {
                     if (await client.SendMessage(content))
