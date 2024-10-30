@@ -19,7 +19,8 @@ namespace Client
 
             // Query the user for a name
             Console.Write("Geben Sie Ihren Namen ein: ");
-            var sender = Console.ReadLine() ?? Guid.NewGuid().ToString();
+            var sender = (Console.ReadLine() ?? Guid.NewGuid().ToString()).ToLower();
+
             Console.WriteLine();
 
             // Create the main client instance
@@ -96,7 +97,7 @@ namespace Client
                 Console.WriteLine("Verbindung konnte nicht hergestellt werden.");
                 return;
             }
-            
+
 
             var listenTask = client.ListenForMessages();
             Console.WriteLine("Sie sind nun verbunden. Sie können Nachrichten senden.");
