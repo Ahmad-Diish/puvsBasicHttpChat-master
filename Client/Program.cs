@@ -110,7 +110,7 @@ namespace Client
                 {
                     isInputting = true;
                     Console.ResetColor();
-                    Console.WriteLine("\nGeben Sie bitte einfach Ihre '(Nachricht)' ein , oder '(exit)' zum Beenden: ");
+                    Console.WriteLine("\nGeben Sie Ihre Nachricht ein oder 'exit' zum Beenden: ");
                     Console.ForegroundColor = client.userColor;
                     content = Console.ReadLine() ?? string.Empty;
                     isInputting = false;
@@ -123,7 +123,12 @@ namespace Client
                     await client.Disconnect(); // Use the new Disconnect method instead of just cancelling
                     break;
                 }
-                Console.WriteLine($"Sending message: {content}");
+                Console.Write("Nachricht senden: ");
+
+                Console.ForegroundColor = client.userColor;
+                Console.WriteLine(content);
+
+                Console.ResetColor();
                 if (!string.IsNullOrWhiteSpace(content))
                 {
                     if (await client.SendMessage(content))
@@ -198,7 +203,7 @@ namespace Client
         static void MessageReceivedHandler(object? sender, MessageReceivedEventArgs e)
         {
             DateTime currentTime = DateTime.Now;
-            string formattedTime = currentTime.ToString("HH:mm:ss");
+            string formattedTime = currentTime.ToString("HH:mm");
 
             lock (lockObjectMessageReceivedHandler)
             {
@@ -209,7 +214,7 @@ namespace Client
                 Console.ResetColor();
                 Console.Write($"\nNeue Nachricht empfangen von: ");
                 Console.ForegroundColor = e.UsernameColor;
-                Console.Write($"{e.Sender}: {e.Message} um {formattedTime}\n");
+                Console.Write($"{e.Sender}: {e.Message}  [{formattedTime}]\n");
                 Console.ResetColor();
                 if (isInputting)
                 {

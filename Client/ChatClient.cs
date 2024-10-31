@@ -126,8 +126,11 @@ public class ChatClient
 
         if (response.IsSuccessStatusCode)
         {
-            Console.WriteLine("Nachricht erfolgreich gesendet.");
-            await Task.Delay(100); // Add delay to ensure order in console output
+            lock (Console.Out)
+            {
+                Console.WriteLine("Nachricht erfolgreich gesendet.");
+                Thread.Sleep(100);
+            }
         }
 
         return response.IsSuccessStatusCode;
