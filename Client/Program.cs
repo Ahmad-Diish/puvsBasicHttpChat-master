@@ -19,8 +19,7 @@ namespace Client
 
             // Query the user for a name
             Console.Write("Geben Sie Ihren Namen ein: ");
-            var sender = Console.ReadLine() ?? Guid.NewGuid().ToString().ToLower();
-            sender = char.ToUpper(sender[0]) + sender.Substring(1).ToLower();
+           var sender = (Console.ReadLine() ?? Guid.NewGuid().ToString()).ToLower();
 
 
             Console.WriteLine();
