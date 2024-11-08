@@ -103,6 +103,10 @@ public class ChatClient
     {
         var message = new ChatMessage { Sender = this.alias, SenderColor = this.userColor, Content = $"Hallo, ich habe mich dem Chat angeschlossen!" };
         var response = await this.httpClient.PostAsJsonAsync("/messages", message);
+        if (response.IsSuccessStatusCode)
+        {
+            SaveMessageToGeneralFile(message); 
+        }
 
         return response.IsSuccessStatusCode;
     }
@@ -134,8 +138,7 @@ public class ChatClient
                 Thread.Sleep(100);
             }
 
-          SaveMessageToGeneralFile(message);
-          SaveMessageToFile(message);
+            SaveMessageToGeneralFile(message);
         }
 
         return response.IsSuccessStatusCode;
@@ -156,6 +159,11 @@ public class ChatClient
 
                 if (message != null)
                 {
+                    if (!IsMessageDuplicate(message))
+                    {
+                        SaveMessageToFile(message);
+                    }
+
                     await Task.Delay(50);
                     this.OnMessageReceived(message.Sender, message.Content, message.Timestamp, message.SenderColor);
                 }
@@ -184,6 +192,7 @@ public class ChatClient
             if (response.IsSuccessStatusCode)
             {
                 Console.WriteLine("Erfolgreich vom Server abgemeldet.");
+                SaveMessageToGeneralFile(leaveMessage);
             }
             else
             {
