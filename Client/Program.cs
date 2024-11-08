@@ -19,7 +19,7 @@ namespace Client
 
             // Query the user for a name
             Console.Write("Geben Sie Ihren Namen ein: ");
-           var sender = (Console.ReadLine() ?? Guid.NewGuid().ToString()).ToLower();
+            var sender = (Console.ReadLine() ?? Guid.NewGuid().ToString()).ToLower();
 
 
             Console.WriteLine();
@@ -49,8 +49,8 @@ namespace Client
             {
                 Console.ResetColor();
                 Console.WriteLine("\n--- Hauptmenü ---");
-                Console.WriteLine("1. Neuen Chat beginnen");
-                Console.WriteLine("2. Vorherigen Chat-Verlauf fortsetzen");
+                Console.WriteLine("1. Vorherigen Privat-Chat-Verlauf fortsetzen");
+                Console.WriteLine("2. Vorherigen Allgemein-Chat-Verlauf fortsetzen");
                 Console.WriteLine("3. Chat-Verlauf verwalten");
                 Console.WriteLine("4. Chat schließen");
                 Console.Write("Ihre Wahl: ");
@@ -88,10 +88,15 @@ namespace Client
         {
             if (!isNewChat)
             {
-                Console.WriteLine("\nFortsetzen des vorherigen Chat-Verlaufs...");
+                Console.WriteLine("\nFortsetzen des vorherigen Allgemein-Chat-Verlaufs...");
                 await client.LoadAndDisplayPreviousMessages();
             }
 
+            if (isNewChat)
+            {
+                Console.WriteLine("\nFortsetzen des vorherigen Privat-Chat-Verlaufs...");
+                await client.SingelLoadAndDisplayPreviousMessages();
+            }
             var connectTask = await client.Connect();
             if (!connectTask)
             {
@@ -120,7 +125,7 @@ namespace Client
 
                 if (content.ToLower() == "exit")
                 {
-                    await client.Disconnect(); // Use the new Disconnect method instead of just cancelling
+                    await client.Disconnect(); 
                     break;
                 }
                 Console.Write("Nachricht senden: ");
@@ -163,7 +168,8 @@ namespace Client
                 Console.WriteLine("1. Chat-Verlauf anzeigen");
                 Console.WriteLine("2. Chat-Verlauf löschen");
                 Console.WriteLine("3. Chat-Verlauf nach Raum und Zeit anzeigen");
-                Console.WriteLine("4. Zurück zum Hauptmenü");
+                Console.WriteLine("4. Chat-Verlauf der letzten XX Stunden anzeigen");
+                Console.WriteLine("5. Zurück zum Hauptmenü");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
 
@@ -192,6 +198,17 @@ namespace Client
                         }
                         break;
                     case "4":
+                        Console.Write("Geben Sie die Anzahl der Stunden für den Chat-Verlauf ein: ");
+                        if (int.TryParse(Console.ReadLine(), out int hours))
+                        {
+                            client.GetChatHistoryLastHours(hours);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Ungültige Stundenangabe.");
+                        }
+                        break;
+                    case "5":
                         return;
                     default:
                         Console.WriteLine("Ungültige Auswahl, bitte versuchen Sie es erneut.");
@@ -209,13 +226,17 @@ namespace Client
             {
                 if (isInputting)
                 {
-                    Console.WriteLine(); // Add a new line if user is currently inputting
+                    Console.WriteLine();
                 }
                 Console.ResetColor();
-                Console.Write($"\nNeue Nachricht empfangen von: ");
-                Console.ForegroundColor = e.UsernameColor;
-                Console.Write($"{e.Sender}: {e.Message}  [{formattedTime}]\n");
-                Console.ResetColor();
+                if (e.Sender != client.Alias)  
+                {
+                    Console.Write($"\nNeue Nachricht empfangen von: ");
+
+                    Console.ForegroundColor = e.UsernameColor;
+                    Console.Write($"{e.Sender}: {e.Message}  [{formattedTime}]\n");
+                    Console.ResetColor();
+                }
                 if (isInputting)
                 {
                     Console.ForegroundColor = client.userColor;

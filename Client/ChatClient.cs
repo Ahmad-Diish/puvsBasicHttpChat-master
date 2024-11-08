@@ -16,9 +16,11 @@ public class ChatClient
     private readonly CancellationTokenSource cancellationTokenSource = new();
     private static readonly string COLOR_FILE_PATH = "user_colors.json";
 
+    public string Alias { get; private set; }
     public ChatClient(string alias, Uri serverUri)
     {
         this.alias = alias;
+        this.Alias = alias;
         this.httpClient = new HttpClient();
         this.httpClient.BaseAddress = serverUri;
         this.userColor = LoadOrGenerateColor();
@@ -131,6 +133,9 @@ public class ChatClient
                 Console.WriteLine("Nachricht erfolgreich gesendet.");
                 Thread.Sleep(100);
             }
+
+          SaveMessageToGeneralFile(message);
+          SaveMessageToFile(message);
         }
 
         return response.IsSuccessStatusCode;
@@ -151,12 +156,6 @@ public class ChatClient
 
                 if (message != null)
                 {
-                    if (!IsMessageDuplicate(message))
-                    {
-                        SaveMessageToFile(message);
-                    }
-
-                    // Display the received message with a short delay to avoid overlapping output
                     await Task.Delay(50);
                     this.OnMessageReceived(message.Sender, message.Content, message.Timestamp, message.SenderColor);
                 }
@@ -179,6 +178,8 @@ public class ChatClient
     {
         try
         {
+            var leaveMessage = new ChatMessage { Sender = this.alias, SenderColor = this.userColor, Content = $"Ich habe den Chat verlassen!" };
+            await this.httpClient.PostAsJsonAsync("/messages", leaveMessage);
             var response = await this.httpClient.DeleteAsync($"/users/{Uri.EscapeDataString(this.alias)}");
             if (response.IsSuccessStatusCode)
             {
@@ -214,7 +215,10 @@ public class ChatClient
         });
     }
 
+    // Chat-Verlauf Methode 
+
     private readonly object fileLock = new();
+    private const string GENERAL_LOG_FILE_PATH = "Verlauf/Allgemein.txt";
 
     private bool IsMessageDuplicate(ChatMessage message)
     {
@@ -233,6 +237,31 @@ public class ChatClient
             {
                 var lastLine = reader.ReadToEnd().Split(Environment.NewLine).LastOrDefault();
                 return lastLine != null && lastLine.Contains($"{message.Timestamp}: {message.Sender}: {message.Content}");
+            }
+        }
+    }
+
+    private void SaveMessageToGeneralFile(ChatMessage message)
+    {
+        lock (fileLock)
+        {
+            try
+            {
+                string folderPath = "Verlauf";
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+
+                using (var fileStream = new FileStream(GENERAL_LOG_FILE_PATH, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(fileStream))
+                {
+                    writer.WriteLine($"{message.Timestamp}: {message.Sender} : {message.Content}");
+                }
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"Fehler beim Speichern der Nachricht in der allgemeinen Datei: {ex.Message}");
             }
         }
     }
@@ -263,7 +292,6 @@ public class ChatClient
             }
         }
     }
-
     public void DeleteChatHistory()
     {
         string folderPath = "Verlauf";
@@ -309,6 +337,46 @@ public class ChatClient
         }
     }
 
+    public void GetChatHistoryLastHours(int hours)
+    {
+        DateTime cutoffTime = DateTime.Now.AddHours(-hours);
+
+        lock (fileLock)
+        {
+            if (File.Exists(GENERAL_LOG_FILE_PATH))
+            {
+                try
+                {
+                    using (var fileStream = new FileStream(GENERAL_LOG_FILE_PATH, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (var reader = new StreamReader(fileStream))
+                    {
+                        Console.WriteLine($"\nChat-Verlauf der letzten {hours} Stunden:");
+                        string? line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            string[] parts = line.Split(": ", 3, StringSplitOptions.None);
+                            if (parts.Length == 3 && DateTime.TryParse(parts[0], out DateTime timestamp))
+                            {
+                                if (timestamp >= cutoffTime)
+                                {
+                                    Console.WriteLine(line);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (IOException ex)
+                {
+                    Console.WriteLine($"Fehler beim Lesen des Chat-Verlaufs: {ex.Message}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Kein allgemeiner Chat-Verlauf verfügbar.");
+            }
+        }
+    }
+
     public async Task LoadAndDisplayPreviousMessages()
     {
         List<ChatMessage> messages = await Task.Run(() => LoadPreviousMessagesFromFile());
@@ -328,6 +396,64 @@ public class ChatClient
     }
 
     private List<ChatMessage> LoadPreviousMessagesFromFile()
+    {
+        List<ChatMessage> messages = new List<ChatMessage>();
+        string folderPath = "Verlauf";
+        string logFilePath = Path.Combine(folderPath, $"Allgemein.txt");
+
+        try
+        {
+            if (File.Exists(logFilePath))
+            {
+                using (var fileStream = new FileStream(logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(fileStream))
+                {
+                    string[] lines = reader.ReadToEnd().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (string line in lines)
+                    {
+                        string[] parts = line.Split(new[] { ": " }, 3, StringSplitOptions.None);
+                        if (parts.Length == 3)
+                        {
+                            ChatMessage message = new ChatMessage
+                            {
+                                Timestamp = DateTime.Parse(parts[0]),
+                                Sender = parts[1],
+                                Content = parts[2],
+                                SenderColor = this.userColor
+                            };
+                            messages.Add(message);
+                        }
+                    }
+                }
+            }
+        }
+        catch (IOException ex)
+        {
+            Console.WriteLine($"Fehler beim Laden des Chat-Verlaufs: {ex.Message}");
+        }
+
+        return messages;
+    }
+
+    public async Task SingelLoadAndDisplayPreviousMessages()
+    {
+        List<ChatMessage> messages = await Task.Run(() => SingelLoadPreviousMessagesFromFile());
+
+        if (messages.Count > 0)
+        {
+            Console.WriteLine("\nVorheriger Chat-Verlauf:");
+            foreach (var message in messages)
+            {
+                Console.WriteLine($"{message.Timestamp}: {message.Sender}: {message.Content}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Kein Chat-Verlauf verfügbar.");
+        }
+    }
+
+    private List<ChatMessage> SingelLoadPreviousMessagesFromFile()
     {
         List<ChatMessage> messages = new List<ChatMessage>();
         string folderPath = "Verlauf";
