@@ -53,6 +53,7 @@ namespace Client
                 Console.WriteLine("2. Vorherigen Allgemein-Chat-Verlauf fortsetzen");
                 Console.WriteLine("3. Chat-Verlauf verwalten");
                 Console.WriteLine("4. Chat schließen");
+                Console.WriteLine("5. Statistik anzeigen");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
 
@@ -77,6 +78,9 @@ namespace Client
                     case "4":
                         Console.WriteLine("Chat wird geschlossen...");
                         return;
+                    case "5":
+                        client.SendMessage("/statistik");
+                        break;
                     default:
                         Console.WriteLine("Ungültige Auswahl, bitte versuchen Sie es erneut.");
                         break;

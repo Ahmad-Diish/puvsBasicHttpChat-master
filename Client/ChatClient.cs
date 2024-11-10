@@ -15,6 +15,7 @@ public class ChatClient
     public ConsoleColor userColor { get; private set; }
     private readonly CancellationTokenSource cancellationTokenSource = new();
     private static readonly string COLOR_FILE_PATH = "user_colors.json";
+    private const string GENERAL_LOG_FILE_PATH = "Verlauf/Allgemein.txt";
 
     public string Alias { get; private set; }
     public ChatClient(string alias, Uri serverUri)
@@ -121,6 +122,13 @@ public class ChatClient
 
     public async Task<bool> SendMessage(string content)
     {
+        //Durch den Befehl „/statistik“ abrufen
+        if (content.ToLower() == "/statistik")
+        {
+            DisplayStatistics();
+            return true;
+        }
+
         var message = new ChatMessage
         {
             Sender = this.alias,
@@ -144,6 +152,86 @@ public class ChatClient
         return response.IsSuccessStatusCode;
     }
 
+    private void DisplayStatistics()
+    {
+        Console.WriteLine("\n--- Chat-Statistik (Gesamter Chat) ---");
+
+        if (!File.Exists(GENERAL_LOG_FILE_PATH))
+        {
+            Console.WriteLine("Keine Nachrichten vorhanden.");
+            return;
+        }
+
+        // Lesen und Analysieren der Nachrichten aus der allgemeinen Datei
+        var messageCounts = new Dictionary<string, int>();
+        int totalMessages = 0;
+
+        lock (fileLock)
+        {
+            try
+            {
+                using (var fileStream = new FileStream(GENERAL_LOG_FILE_PATH, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(fileStream))
+                {
+                    string? line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                 /* Überspringen bestimmter Nachrichten((ohne start - end nachricht))
+                if (line.Contains("Hallo, ich habe mich dem Chat angeschlossen!") || 
+                    line.Contains("Ich habe den Chat verlassen!"))
+                {
+                    continue;
+                }*/
+                        
+                        totalMessages++;
+
+                        // Extrahieren des Benutzernamens aus der Nachricht
+                        var parts = line.Split(new[] { ": " }, 3, StringSplitOptions.None);
+                        if (parts.Length >= 2)
+                        {
+                            var sender = parts[1].Trim();
+                            if (messageCounts.ContainsKey(sender))
+                            {
+                                messageCounts[sender]++;
+                            }
+                            else
+                            {
+                                messageCounts[sender] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (IOException ex)
+            {
+                Console.WriteLine($"Fehler beim Lesen der allgemeinen Datei: {ex.Message}");
+                return;
+            }
+        }
+        
+
+        // Ausgabe der Gesamtstatistik
+        Console.WriteLine($"Gesamtanzahl der gesendeten Nachrichten: {totalMessages}");
+
+        // Durchschnittliche Anzahl von Nachrichten pro Benutzer
+        int userCount = messageCounts.Count;
+        double averageMessagesPerUser = userCount > 0 ? (double)totalMessages / userCount : 0;
+        Console.WriteLine($"Durchschnittliche Anzahl von Nachrichten pro Benutzer: {averageMessagesPerUser:F2}");
+
+        // Top 3 aktivste Benutzer
+        var topUsers = messageCounts
+            .OrderByDescending(kvp => kvp.Value)
+            .Take(3)
+            .ToList();
+
+        Console.WriteLine("Die drei aktivsten Benutzer:");
+        foreach (var user in topUsers)
+        {
+            Console.WriteLine($"- {user.Key}: {user.Value} Nachrichten");
+        }
+
+        Console.WriteLine();
+    }
 
     public async Task ListenForMessages()
     {
@@ -224,11 +312,9 @@ public class ChatClient
         });
     }
 
-    // Chat-Verlauf Methode 
+    // Chat-Verlauf Methode
 
     private readonly object fileLock = new();
-    private const string GENERAL_LOG_FILE_PATH = "Verlauf/Allgemein.txt";
-
     private bool IsMessageDuplicate(ChatMessage message)
     {
         string folderPath = "Verlauf";
