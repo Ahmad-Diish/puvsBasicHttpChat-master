@@ -52,8 +52,8 @@ namespace Client
                 Console.WriteLine("1. Vorherigen Privat-Chat-Verlauf fortsetzen");
                 Console.WriteLine("2. Vorherigen Allgemein-Chat-Verlauf fortsetzen");
                 Console.WriteLine("3. Chat-Verlauf verwalten");
-                Console.WriteLine("4. Chat schließen");
-                Console.WriteLine("5. Statistik anzeigen");
+                Console.WriteLine("4. Statistik anzeigen");
+                Console.WriteLine("5. Chat schließen");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
 
@@ -76,11 +76,12 @@ namespace Client
                         await HandleChatHistory(client);
                         break;
                     case "4":
-                        Console.WriteLine("Chat wird geschlossen...");
-                        return;
-                    case "5":
-                        client.SendMessage("/statistik");
+                        await client.SendMessage("/statistik");
                         break;
+                    case "5":
+                        Console.WriteLine("Chat wird geschlossen...");
+                        await client.Disconnect();
+                        return;
                     default:
                         Console.WriteLine("Ungültige Auswahl, bitte versuchen Sie es erneut.");
                         break;
