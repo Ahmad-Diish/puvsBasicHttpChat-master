@@ -9,7 +9,7 @@ namespace Client;
 /// A client for the simple web server
 /// </summary>
 public class ChatClient
-{
+{         // Cooldown-Zeit in Sekunden
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
@@ -42,6 +42,42 @@ public class ChatClient
 
         return newColor;
     }
+
+// Wörter Filter
+    private List<string> LoadFilterWords()
+{
+    const string filterFilePath = "woerterfilter.txt";
+
+    // Datei erstellen, falls nicht vorhanden
+    if (!File.Exists(filterFilePath))
+    {
+        File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
+    }
+
+    // Wörter aus der Datei laden
+    return File.ReadAllLines(filterFilePath)
+               .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
+               .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
+               .ToList();
+}
+
+private string CensorMessage(string content, out bool wasCensored)
+{
+    wasCensored = false;
+    var filterWords = LoadFilterWords();
+
+    foreach (var word in filterWords)
+    {
+        if (content.ToLower().Contains(word))
+        {
+            wasCensored = true;
+            var replacement = new string('*', word.Length);
+            content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    return content;
+}
 
     private ConsoleColor GenerateNewColor()
     {
@@ -122,6 +158,17 @@ public class ChatClient
 
     public async Task<bool> SendMessage(string content)
     {
+        // Nachricht zensieren
+        bool wasCensored;
+        content = CensorMessage(content, out wasCensored);
+
+        if (wasCensored)
+        {
+            Console.ForegroundColor = ConsoleColor.Red; // Schriftfarbe auf Rot setzen
+            Console.WriteLine("Warnung: Ihre Nachricht enthält unzulässige Wörter, die ersetzt wurden.");
+            Console.ResetColor(); // Zurücksetzen auf Standardfarbe
+        }
+
         //Durch den Befehl „/statistik“ abrufen
         if (content.ToLower() == "/statistik")
         {
