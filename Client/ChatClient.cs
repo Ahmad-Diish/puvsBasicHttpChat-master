@@ -9,7 +9,10 @@ namespace Client;
 /// A client for the simple web server
 /// </summary>
 public class ChatClient
-{         // Cooldown-Zeit in Sekunden
+{   
+    private DateTime lastMessageTimestamp = DateTime.MinValue; // Zeitpunkt der letzten Nachricht
+    private string lastMessageContent = string.Empty;         // Inhalt der letzten Nachricht
+    private const int MESSAGE_COOLDOWN_SECONDS = 2;           // Cooldown-Zeit in Sekunden
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
@@ -158,6 +161,24 @@ private string CensorMessage(string content, out bool wasCensored)
 
     public async Task<bool> SendMessage(string content)
     {
+        // Spam-Verhinderung: Cooldown prüfen
+        if ((DateTime.Now - lastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
+        {
+            Console.ForegroundColor = ConsoleColor.Green; // Helle grüne Schrift
+            Console.WriteLine("Bitte warten Sie einen Moment, bevor Sie eine weitere Nachricht senden.");
+            Console.ResetColor();
+            return false;
+        }
+
+        // Doppelte Nachrichten prüfen
+        if (content == lastMessageContent)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow; // Gelbe Schrift für Hinweis
+            Console.WriteLine("Das wiederholte Senden derselben Nachricht ist nicht zulässig.");
+            Console.ResetColor();
+            return false;
+        }
+
         // Nachricht zensieren
         bool wasCensored;
         content = CensorMessage(content, out wasCensored);
@@ -194,7 +215,15 @@ private string CensorMessage(string content, out bool wasCensored)
             }
 
             SaveMessageToGeneralFile(message);
+
+            // Letzte Nachricht und Zeitpunkt speichern
+            lastMessageContent = content;
+            lastMessageTimestamp = DateTime.Now;
         }
+        else
+        {
+            Console.WriteLine("Nachricht konnte nicht gesendet werden.");
+        } 
 
         return response.IsSuccessStatusCode;
     }
