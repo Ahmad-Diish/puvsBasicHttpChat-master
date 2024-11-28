@@ -77,7 +77,7 @@ namespace Client
                         break;
                     case "4":
                         await client.SendMessage("/statistik");
-                        break; ;
+                        break;
                     case "5":
                         Console.WriteLine("Chat wird geschlossen...");
                         await client.Disconnect();
@@ -100,7 +100,7 @@ namespace Client
             if (isNewChat)
             {
                 Console.WriteLine("\nFortsetzen des vorherigen Privat-Chat-Verlaufs...");
-                await client.SingelLoadAndDisplayPreviousMessages();
+                await client.LoadAndDisplayAllMessagesForCurrentUser();
             }
             var connectTask = await client.Connect();
             if (!connectTask)
@@ -130,7 +130,7 @@ namespace Client
 
                 if (content.ToLower() == "exit")
                 {
-                    await client.Disconnect();
+                    await client.Disconnect(); 
                     break;
                 }
                 Console.Write("Nachricht senden: ");
@@ -172,9 +172,8 @@ namespace Client
                 Console.WriteLine("\n--- Verlauf Optionen ---");
                 Console.WriteLine("1. Chat-Verlauf anzeigen");
                 Console.WriteLine("2. Chat-Verlauf löschen");
-                Console.WriteLine("3. Chat-Verlauf nach Raum und Zeit anzeigen");
-                Console.WriteLine("4. Chat-Verlauf der letzten XX Stunden anzeigen");
-                Console.WriteLine("5. Zurück zum Hauptmenü");
+                Console.WriteLine("3. Chat-Verlauf der letzten XX Stunden anzeigen");
+                Console.WriteLine("4. Zurück zum Hauptmenü");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
 
@@ -187,36 +186,17 @@ namespace Client
                         await client.DeleteChatHistory();
                         break;
                     case "3":
-                        Console.Write("Geben Sie das Startdatum (yyyy-MM-dd) ein: ");
-                        var startDateInput = Console.ReadLine();
-                        Console.Write("Geben Sie das Enddatum (yyyy-MM-dd) ein: ");
-                        var endDateInput = Console.ReadLine();
-
-                        if (DateTime.TryParseExact(startDateInput, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out DateTime startDate) &&
-                            DateTime.TryParseExact(endDateInput, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out DateTime endDate))
-                        {
-                            // Enddatum auf das Ende des Tages setzen, um den gesamten Tag einzuschließen
-                            endDate = endDate.AddDays(1).AddTicks(-1);
-
-                            await client.LoadMessagesByDateRange(startDate, endDate);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Ungültiges Datum eingegeben. Bitte verwenden Sie das Format yyyy-MM-dd.");
-                        }
-                        break;
-                    case "4":
                         Console.Write("Geben Sie die Anzahl der Stunden für den Chat-Verlauf ein: ");
                         if (int.TryParse(Console.ReadLine(), out int hours))
                         {
-                            await client.GetChatHistoryLastHours(hours);
+                          await  client.LoadAndDisplayChatHistoryLastHours(hours);
                         }
                         else
                         {
                             Console.WriteLine("Ungültige Stundenangabe.");
                         }
                         break;
-                    case "5":
+                    case "4":
                         return;
                     default:
                         Console.WriteLine("Ungültige Auswahl, bitte versuchen Sie es erneut.");
@@ -237,7 +217,7 @@ namespace Client
                     Console.WriteLine();
                 }
                 Console.ResetColor();
-                if (e.Sender != client.Alias)
+                if (e.Sender != client.Alias)  
                 {
                     Console.Write($"\nNeue Nachricht empfangen von: ");
 
