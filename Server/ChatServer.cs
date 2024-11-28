@@ -186,15 +186,8 @@ public class ChatServer
             endpoints.MapGet("/chat/history", async context =>
             {
                 string? username = context.Request.Query["username"];
-                string? limitStr = context.Request.Query["limit"];
-                int limit = 0;
 
-                if (!string.IsNullOrEmpty(limitStr) && int.TryParse(limitStr, out int parsedLimit))
-                {
-                    limit = parsedLimit;
-                }
-
-                var messages = await GetChatHistoryFromDatabase(username, limit);
+                var messages = await GetChatHistoryFromDatabase(username);
 
                 if (messages == null || !messages.Any())
                 {
@@ -233,41 +226,41 @@ public class ChatServer
 
 
             endpoints.MapGet("/chat/hours", async context =>
-               {
-                   string? hoursStr = context.Request.Query["hours"];
-                   if (string.IsNullOrEmpty(hoursStr) || !int.TryParse(hoursStr, out var hours) || hours <= 0)
-                   {
-                       context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                       await context.Response.WriteAsync("Ungültiger oder fehlender 'hours'-Parameter.");
-                       return;
-                   }
+            {
+                string? hoursStr = context.Request.Query["hours"];
+                if (string.IsNullOrEmpty(hoursStr) || !int.TryParse(hoursStr, out var hours) || hours <= 0)
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsync("Ungültiger oder fehlender 'hours'-Parameter.");
+                    return;
+                }
 
-                   // Berechne das Startdatum basierend auf der Anzahl der Stunden
-                   var startDate = DateTime.UtcNow.AddHours(-hours);
+                // Berechne das Datum basierend auf der Anzahl der Stunden
+                var Date = DateTime.UtcNow.AddHours(-hours);
 
-                   try
-                   {
-                       // Nachrichten aus der Datenbank abrufen
-                       var messages = await GetChatHistoryFromDatabase(startDate);
+                try
+                {
+                    // Nachrichten aus der Datenbank abrufen
+                    var messages = await GetChatHistoryFromDatabase(Date);
 
-                       if (messages == null || !messages.Any())
-                       {
-                           context.Response.StatusCode = StatusCodes.Status404NotFound;
-                           await context.Response.WriteAsync($"Keine Nachrichten in den letzten {hours} Stunden gefunden.");
-                           return;
-                       }
+                    if (messages == null || !messages.Any())
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        await context.Response.WriteAsync($"Keine Nachrichten in den letzten {hours} Stunden gefunden.");
+                        return;
+                    }
 
-                       // Nachrichten als JSON zurücksenden
-                       await context.Response.WriteAsJsonAsync(messages);
-                   }
-                   catch (Exception ex)
-                   {
-                       // Fehlerbehandlung
-                       Console.WriteLine($"Fehler beim Abrufen des Verlaufs: {ex.Message}");
-                       context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                       await context.Response.WriteAsync("Ein Fehler ist aufgetreten.");
-                   }
-               });
+                    // Nachrichten als JSON zurücksenden
+                    await context.Response.WriteAsJsonAsync(messages);
+                }
+                catch (Exception ex)
+                {
+                    // Fehlerbehandlung
+                    Console.WriteLine($"Fehler beim Abrufen des Verlaufs: {ex.Message}");
+                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    await context.Response.WriteAsync("Ein Fehler ist aufgetreten.");
+                }
+            });
 
 
 
@@ -338,7 +331,7 @@ public class ChatServer
 
     }
 
-    private async Task<List<ChatMessage>> GetChatHistoryFromDatabase(DateTime? startDate = null, DateTime? endDate = null, string? username = null, int limit = 0)
+    private async Task<List<ChatMessage>> GetChatHistoryFromDatabase(DateTime? Date = null, string? username = null)
     {
         var messages = new List<ChatMessage>();
 
@@ -357,34 +350,23 @@ public class ChatServer
 
             var parameters = new List<NpgsqlParameter>();
 
-            // Filter hinzufügen
-            if (startDate.HasValue)
+            // Filter für Datum hinzufügen
+            if (Date.HasValue)
             {
-                query.Append(" AND Chat.timestamp >= @startDate");
-                parameters.Add(new NpgsqlParameter("startDate", startDate.Value));
+                query.Append(" AND Chat.timestamp >= @Date");
+                parameters.Add(new NpgsqlParameter("Date", Date.Value));
             }
 
-            if (endDate.HasValue)
-            {
-                query.Append(" AND Chat.timestamp <= @endDate");
-                parameters.Add(new NpgsqlParameter("endDate", endDate.Value));
-            }
-
+            // Filter für Benutzernamen hinzufügen
             if (!string.IsNullOrEmpty(username))
             {
                 query.Append(" AND Benutzer.Sender = @username");
                 parameters.Add(new NpgsqlParameter("username", username));
             }
 
-            // Sortierung und Limitierung
+            // Sortierung nach Zeitstempel
             query.Append(" ORDER BY Chat.timestamp");
-            if (limit > 0)
-            {
-                query.Append(" DESC LIMIT @limit");
-                parameters.Add(new NpgsqlParameter("limit", limit));
-            }
 
-            // SQL-Befehl vorbereiten und ausführen
             using var command = new NpgsqlCommand(query.ToString(), connection);
             command.Parameters.AddRange(parameters.ToArray());
 
@@ -408,7 +390,7 @@ public class ChatServer
         return messages;
     }
 
-    private async Task<List<ChatMessage>> GetChatHistoryFromDatabase(string? username, int limit)
+    private async Task<List<ChatMessage>> GetChatHistoryFromDatabase(string? username)
     {
         var messages = new List<ChatMessage>();
 
@@ -417,7 +399,7 @@ public class ChatServer
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync();
 
-            // SQL-Abfrage mit dynamischem Limit und optionalem Benutzernamen
+            // SQL-Abfrage ohne Limit
             var query = new StringBuilder(
                 @"SELECT Chat.timestamp, Benutzer.Sender, Chat.Content, Benutzer.sender_color
               FROM Chat
@@ -433,15 +415,7 @@ public class ChatServer
                 parameters.Add(new NpgsqlParameter("username", username));
             }
 
-            if (limit > 0)
-            {
-                query.Append(" ORDER BY Chat.timestamp DESC LIMIT @limit");
-                parameters.Add(new NpgsqlParameter("limit", limit));
-            }
-            else
-            {
-                query.Append(" ORDER BY Chat.timestamp");
-            }
+            query.Append(" ORDER BY Chat.timestamp");
 
             using var command = new NpgsqlCommand(query.ToString(), connection);
             command.Parameters.AddRange(parameters.ToArray());
@@ -456,7 +430,6 @@ public class ChatServer
                     Content = reader.GetString(2),
                     SenderColor = Enum.Parse<ConsoleColor>(reader.GetString(3))
                 });
-
             }
         }
         catch (Exception ex)
