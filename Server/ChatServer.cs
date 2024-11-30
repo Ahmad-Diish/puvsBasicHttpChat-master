@@ -136,6 +136,21 @@ public class ChatServer
                 // send out the next message
                 await context.Response.WriteAsJsonAsync(message);
             });
+            // Endpunkts für die Statistik
+            endpoints.MapGet("/statistics", async context =>
+            {
+                try
+                {
+                    var stats = await GetChatStatistics();
+                    await context.Response.WriteAsJsonAsync(stats);
+                }
+                catch (Exception ex)
+                {
+                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    Console.WriteLine($"Fehler beim Berechnen der Statistik: {ex.Message}");
+                    await context.Response.WriteAsync("Fehler beim Berechnen der Statistik.");
+                }
+            });
 
             // This endpoint is for sending messages into the chat
             endpoints.MapPost("/messages", async context =>
@@ -461,4 +476,64 @@ public class ChatServer
             return false;
         }
     }
+    // Methode zur Berechnung der Statistik 
+    private async Task<Dictionary<string, object>> GetChatStatistics()
+    {
+        var stats = new Dictionary<string, object>();
+
+        try
+        {
+            using var connection = new NpgsqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            // Gesamtanzahl der Nachrichten 
+            var totalMessagesQuery = @"
+            SELECT COUNT(*)
+            FROM Chat
+            WHERE Content NOT IN ('Hallo, ich habe mich dem Chat angeschlossen!', 'Ich habe den Chat verlassen!')";
+            using var totalCommand = new NpgsqlCommand(totalMessagesQuery, connection);
+            var totalMessages = Convert.ToInt32(await totalCommand.ExecuteScalarAsync());
+            stats["totalMessages"] = totalMessages;
+
+            // Durchschnittliche Nachrichtenanzahl pro Benutzer 
+            var averageMessagesQuery = @"
+            SELECT AVG(message_count)
+            FROM (
+                SELECT COUNT(*) AS message_count
+                FROM Chat
+                WHERE Content NOT IN ('Hallo, ich habe mich dem Chat angeschlossen!', 'Ich habe den Chat verlassen!')
+                GROUP BY sender_id
+            ) AS counts";
+            using var avgCommand = new NpgsqlCommand(averageMessagesQuery, connection);
+            var averageMessages = Convert.ToDouble(await avgCommand.ExecuteScalarAsync());
+            stats["averageMessagesPerUser"] = Math.Round(averageMessages, 2);
+
+            // Top 3 Benutzer mit den meisten Nachrichten 
+            var topUsersQuery = @"
+            SELECT Benutzer.Sender, COUNT(*) AS message_count
+            FROM Chat
+            JOIN Benutzer ON Chat.sender_id = Benutzer.Id
+            WHERE Content NOT IN ('Hallo, ich habe mich dem Chat angeschlossen!', 'Ich habe den Chat verlassen!')
+            GROUP BY Benutzer.Sender
+            ORDER BY message_count DESC
+            LIMIT 3";
+            using var topUsersCommand = new NpgsqlCommand(topUsersQuery, connection);
+            using var reader = await topUsersCommand.ExecuteReaderAsync();
+
+            var topUsers = new Dictionary<string, int>();
+            while (await reader.ReadAsync())
+            {
+                topUsers[reader.GetString(0)] = reader.GetInt32(1);
+            }
+            stats["topUsers"] = topUsers;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Fehler beim Abrufen der Statistikdaten: {ex.Message}");
+            throw;
+        }
+
+        return stats;
+    }
+
 }

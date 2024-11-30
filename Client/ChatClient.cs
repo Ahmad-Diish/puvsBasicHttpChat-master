@@ -222,52 +222,6 @@ public class ChatClient
         return response.IsSuccessStatusCode;
     }
 
-    private async Task DisplayStatistics()
-    {
-        Console.WriteLine("\n--- Chat-Statistik (Gesamter Chat) ---");
-
-        using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-
-        int totalMessages = 0;
-        var messageCounts = new Dictionary<string, int>();
-
-        try
-        {
-            // Abfrage für die Gesamtzahl der Nachrichten
-            string totalQuery = "SELECT COUNT(*) FROM Chat";
-            using var totalCommand = new NpgsqlCommand(totalQuery, connection);
-            totalMessages = Convert.ToInt32(await totalCommand.ExecuteScalarAsync());
-
-            // Abfrage für die Anzahl der Nachrichten pro Benutzer
-            string countQuery = "SELECT Benutzer.Sender, COUNT(*) FROM Chat JOIN Benutzer ON Chat.sender_id = Benutzer.Id GROUP BY Benutzer.Sender";
-            using var countCommand = new NpgsqlCommand(countQuery, connection);
-
-            using var reader = await countCommand.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                string sender = reader.GetString(0);
-                int count = reader.GetInt32(1);
-                messageCounts[sender] = count;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Fehler beim Abrufen der Statistikdaten: {ex.Message}");
-            return;
-        }
-
-        Console.WriteLine($"Gesamtanzahl der gesendeten Nachrichten: {totalMessages}");
-        double averageMessagesPerUser = messageCounts.Count > 0 ? (double)totalMessages / messageCounts.Count : 0;
-        Console.WriteLine($"Durchschnittliche Anzahl von Nachrichten pro Benutzer: {averageMessagesPerUser:F2}");
-
-        var topUsers = messageCounts.OrderByDescending(kvp => kvp.Value).Take(3).ToList();
-        Console.WriteLine("Die drei aktivsten Benutzer:");
-        foreach (var user in topUsers)
-        {
-            Console.WriteLine($"- {user.Key}: {user.Value} Nachrichten");
-        }
-    }
 
     public async Task ListenForMessages()
     {
@@ -342,6 +296,75 @@ public class ChatClient
             UsernameColor = usernamecolor
         });
     }
+    //  die Statistik vom Server abzurufen
+private async Task GetStatistics()
+{
+    try
+    {
+        var response = await httpClient.GetFromJsonAsync<Dictionary<string, object>>("/statistics");
+        if (response == null)
+        {
+            Console.WriteLine("Fehler beim Abrufen der Statistiken: Keine Daten erhalten.");
+            return;
+        }
+
+        Console.WriteLine("\n--- Chat-Statistik ---");
+
+        // Gesamtanzahl der gesendeten Nachrichten
+        if (response.TryGetValue("totalMessages", out var totalMessages) && totalMessages != null)
+        {
+            Console.WriteLine($"Gesamtanzahl der gesendeten Nachrichten: {totalMessages}");
+        }
+        else
+        {
+            Console.WriteLine("Fehler: Gesamtanzahl der Nachrichten konnte nicht abgerufen werden.");
+        }
+
+        // Durchschnittliche Nachrichten pro Benutzer
+        if (response.TryGetValue("averageMessagesPerUser", out var averageMessagesPerUser) && averageMessagesPerUser != null)
+        {
+            Console.WriteLine($"Durchschnittliche Nachrichten pro Benutzer: {averageMessagesPerUser}");
+        }
+        else
+        {
+            Console.WriteLine("Fehler: Durchschnittliche Nachrichtenanzahl konnte nicht abgerufen werden.");
+        }
+
+        // Top 3 Benutzer mit den meisten Nachrichten
+        if (response.TryGetValue("topUsers", out var topUsersJson) && topUsersJson != null)
+        {
+            // Sichere Verarbeitung von `topUsersJson`
+            var topUsers = JsonSerializer.Deserialize<Dictionary<string, int>>(topUsersJson.ToString() ?? "{}");
+            if (topUsers != null && topUsers.Count > 0)
+            {
+                Console.WriteLine("Top 3 Benutzer mit den meisten Nachrichten:");
+                foreach (var user in topUsers)
+                {
+                    Console.WriteLine($"- {user.Key}: {user.Value} Nachrichten");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Keine Benutzer mit Nachrichten gefunden.");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Fehler: Die Top-Benutzer-Daten sind nicht verfügbar.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Fehler beim Abrufen der Statistiken: {ex.Message}");
+    }
+}
+
+// Aktualisieren der DisplayStatistics-Methode, um die neue Funktionalität zu verwenden
+private async Task DisplayStatistics()
+{
+    await GetStatistics();
+}
+
 
     // Methode des Chat-Verlaufs
 
