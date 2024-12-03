@@ -17,32 +17,35 @@ namespace Client
         {
             var serverUri = new Uri("http://localhost:5000");
 
-            // Query the user for a name
-            Console.Write("Geben Sie Ihren Namen ein: ");
-            var sender = Console.ReadLine() ?? Guid.NewGuid().ToString();
-
-
-            Console.WriteLine();
-
-            // Create the main client instance
-            client = new ChatClient(sender, serverUri);
-
-            // Check for name and color conflicts
-            var error = false;
-            HttpStatusCode checkResult = await client.Check();
-
-            if (checkResult == HttpStatusCode.BadRequest)
+            while (true)
             {
-                Console.WriteLine("Ein Name ist erforderlich.");
-                error = true;
-            }
-            else if (checkResult == HttpStatusCode.Conflict)
-            {
-                Console.WriteLine("Dieser Benutzername ist bereits vergeben. Bitte versuchen Sie es mit einem anderen Namen.");
-                Environment.Exit(0);
+                // Query the user for a name
+                Console.Write("Geben Sie Ihren Namen ein: ");
+                var sender = Console.ReadLine()?.Trim();
+
+                if (string.IsNullOrWhiteSpace(sender))
+                {
+                    Console.WriteLine("Der Name darf nicht leer sein. Bitte erneut versuchen.");
+                    continue;
+                }
+
+                Console.WriteLine();
+
+                // Assign the new client instance to the static client variable
+                client = new ChatClient(sender, serverUri);
+
+                // Check for name and color conflicts
+                var registrationSuccess = await client.Check();
+
+                if (registrationSuccess)
+                {
+                    Console.WriteLine($"Willkommen, {sender}!");
+                    break;
+                }
             }
 
-            if (error) return;
+            // Add the message received handler
+            client.MessageReceived += MessageReceivedHandler;
 
             // Main menu loop
             while (true)
@@ -56,13 +59,6 @@ namespace Client
                 Console.WriteLine("5. Chat schließen");
                 Console.Write("Ihre Wahl: ");
                 var choice = Console.ReadLine();
-
-                // Create new client instance only when starting a chat
-                if (choice == "1" || choice == "2")
-                {
-                    client = new ChatClient(sender, serverUri);
-                    client.MessageReceived += MessageReceivedHandler;
-                }
 
                 switch (choice)
                 {
@@ -102,8 +98,9 @@ namespace Client
                 Console.WriteLine("\nFortsetzen des vorherigen Privat-Chat-Verlaufs...");
                 await client.LoadAndDisplayAllMessagesForCurrentUser();
             }
-            var connectTask = await client.Connect();
-            if (!connectTask)
+
+            var connectSuccess = await client.Connect();
+            if (!connectSuccess)
             {
                 Console.WriteLine("Verbindung konnte nicht hergestellt werden.");
                 return;
@@ -127,18 +124,18 @@ namespace Client
                     Console.ResetColor();
                 }
 
-
                 if (content.ToLower() == "exit")
                 {
-                    await client.Disconnect(); 
+                    await client.Disconnect();
                     break;
                 }
-                Console.Write("Nachricht senden: ");
 
-                Console.ForegroundColor = client.userColor;
-                Console.WriteLine(content);
+                
+                 Console.Write("Nachricht senden: ");
+                 Console.ForegroundColor = client.userColor;
+                 Console.WriteLine(content);
+                 Console.ResetColor();
 
-                Console.ResetColor();
                 if (!string.IsNullOrWhiteSpace(content))
                 {
                     if (await client.SendMessage(content))
@@ -146,7 +143,7 @@ namespace Client
                         lock (lockObjectMessageReceivedHandler)
                         {
                             Console.ResetColor();
-                            //Console.WriteLine("Nachricht erfolgreich gesendet.");
+                            // Optionally, you can add a confirmation message here if desired
                         }
                     }
                     else
@@ -189,7 +186,7 @@ namespace Client
                         Console.Write("Geben Sie die Anzahl der Stunden für den Chat-Verlauf ein: ");
                         if (int.TryParse(Console.ReadLine(), out int hours))
                         {
-                          await  client.LoadAndDisplayChatHistoryLastHours(hours);
+                            await  client.LoadAndDisplayChatHistoryLastHours(hours);
                         }
                         else
                         {
@@ -217,7 +214,12 @@ namespace Client
                     Console.WriteLine();
                 }
                 Console.ResetColor();
-                if (e.Sender != client.Alias)  
+                if (client == null)
+                {
+                    throw new InvalidOperationException("Client is not initialized.");
+                }
+
+                if (e.Sender != client.Alias)
                 {
                     Console.Write($"\nNeue Nachricht empfangen von: ");
 
@@ -225,11 +227,13 @@ namespace Client
                     Console.Write($"{e.Sender}: {e.Message}  [{formattedTime}]\n");
                     Console.ResetColor();
                 }
+
                 if (isInputting)
                 {
                     Console.ForegroundColor = client.userColor;
                 }
             }
         }
+
     }
 }

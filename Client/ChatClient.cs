@@ -6,6 +6,11 @@ using Data;
 
 namespace Client;
 
+public record RegistrationResponse
+{
+    public string? AssignedColor { get; init; }
+}
+
 /// <summary>
 /// A client for the simple web server
 /// </summary>
@@ -19,7 +24,7 @@ public class ChatClient
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
     private readonly CancellationTokenSource cancellationTokenSource = new();
-    private static readonly string COLOR_FILE_PATH = "user_colors.json";
+
 
     public string Alias { get; private set; }
     public ChatClient(string alias, Uri serverUri)
@@ -28,24 +33,9 @@ public class ChatClient
         this.Alias = alias;
         this.httpClient = new HttpClient();
         this.httpClient.BaseAddress = serverUri;
-        this.userColor = LoadOrGenerateColor();
+
     }
 
-    private ConsoleColor LoadOrGenerateColor()
-    {
-        var colorMapping = LoadColorMapping();
-
-        if (colorMapping.TryGetValue(alias, out string? savedColor))
-        {
-            return (ConsoleColor)Enum.Parse(typeof(ConsoleColor), savedColor);
-        }
-
-        var newColor = GenerateNewColor();
-        colorMapping[alias] = newColor.ToString();
-        SaveColorMapping(colorMapping);
-
-        return newColor;
-    }
 
     // Wörter Filter
     private List<string> LoadFilterWords()
@@ -83,62 +73,7 @@ public class ChatClient
         return content;
     }
 
-    private ConsoleColor GenerateNewColor()
-    {
-        var random = new Random();
-        List<ConsoleColor> excludedColors = new() { ConsoleColor.White, ConsoleColor.Black, ConsoleColor.Gray };
 
-        var usedColors = LoadColorMapping().Values
-            .Select(c => (ConsoleColor)Enum.Parse(typeof(ConsoleColor), c))
-            .ToList();
-
-        var availableColors = Enum.GetValues(typeof(ConsoleColor))
-            .Cast<ConsoleColor>()
-            .Except(excludedColors)
-            .Except(usedColors)
-            .ToList();
-
-        if (!availableColors.Any())
-        {
-            availableColors = Enum.GetValues(typeof(ConsoleColor))
-                .Cast<ConsoleColor>()
-                .Except(excludedColors)
-                .ToList();
-        }
-
-        return availableColors[random.Next(availableColors.Count)];
-    }
-
-    private Dictionary<string, string> LoadColorMapping()
-    {
-        if (File.Exists(COLOR_FILE_PATH))
-        {
-            try
-            {
-                string json = File.ReadAllText(COLOR_FILE_PATH);
-                return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
-                    ?? new Dictionary<string, string>();
-            }
-            catch
-            {
-                return new Dictionary<string, string>();
-            }
-        }
-        return new Dictionary<string, string>();
-    }
-
-    private void SaveColorMapping(Dictionary<string, string> colorMapping)
-    {
-        try
-        {
-            string json = JsonSerializer.Serialize(colorMapping);
-            File.WriteAllText(COLOR_FILE_PATH, json);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Warnung: Farbzuordnung konnte nicht gespeichert werden: {ex.Message}");
-        }
-    }
 
     public async Task<bool> Connect()
     {
@@ -148,13 +83,52 @@ public class ChatClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<HttpStatusCode> Check()
+    public async Task<bool> Check()
     {
-        var message = new ChatMessage { Sender = this.alias, SenderColor = this.userColor, Content = "Hi hier Methode zur Überprüfung des Namens und der Farbe der Registrierung" };
-        var response = await this.httpClient.PostAsJsonAsync($"/messages/id", message);
+        var message = new ChatMessage
+        {
+            Sender = this.alias,
+            Content = string.Empty,
+            SenderColor = ConsoleColor.White  // Add default color
+        };
+        // Sendet eine POST-Anfrage an den Server zur Registrierung des Benutzers
+        var response = await this.httpClient.PostAsJsonAsync("/messages/id", message);
 
-        return response.StatusCode;
+        if (response.IsSuccessStatusCode)
+        {
+            // Liest die Antwort des Servers und deserialisiert sie in RegistrationResponse
+            var responseContent = await response.Content.ReadFromJsonAsync<RegistrationResponse>();
+            if (responseContent != null && responseContent.AssignedColor != null)
+            {
+                string colorStr = responseContent.AssignedColor;
+
+                // Versucht, den erhaltenen Farbstring in ConsoleColor zu konvertieren
+                if (Enum.TryParse(colorStr, out ConsoleColor assignedColor))
+                {
+                    // Weist die zugewiesene Farbe dem Benutzer zu
+                    this.userColor = assignedColor;
+                    return true;
+                }
+            }
+        }
+        else if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+
+            Console.WriteLine("Dieser Benutzername ist bereits vergeben. Bitte versuchen Sie es mit einem anderen Namen.");
+        }
+        else if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            Console.WriteLine("Ein Name ist erforderlich.");
+        }
+        else
+        {
+            Console.WriteLine("Fehler bei der Registrierung.");
+        }
+
+        return false;
     }
+
+
 
     public async Task<bool> SendMessage(string content)
     {
@@ -201,6 +175,7 @@ public class ChatClient
             Content = content,
             Timestamp = DateTime.Now
         };
+
         var response = await this.httpClient.PostAsJsonAsync("/messages", message);
 
         if (response.IsSuccessStatusCode)
@@ -221,6 +196,7 @@ public class ChatClient
 
         return response.IsSuccessStatusCode;
     }
+
 
 
     public async Task ListenForMessages()
@@ -248,6 +224,75 @@ public class ChatClient
                 break;
             }
         }
+    }
+
+    //  die Statistik vom Server abzurufen
+    private async Task GetStatistics()
+    {
+        try
+        {
+            var response = await httpClient.GetFromJsonAsync<Dictionary<string, object>>("/statistics");
+            if (response == null)
+            {
+                Console.WriteLine("Fehler beim Abrufen der Statistiken: Keine Daten erhalten.");
+                return;
+            }
+
+            Console.WriteLine("\n--- Chat-Statistik ---");
+
+            // Gesamtanzahl der gesendeten Nachrichten
+            if (response.TryGetValue("totalMessages", out var totalMessages) && totalMessages != null)
+            {
+                Console.WriteLine($"Gesamtanzahl der gesendeten Nachrichten: {totalMessages}");
+            }
+            else
+            {
+                Console.WriteLine("Fehler: Gesamtanzahl der Nachrichten konnte nicht abgerufen werden.");
+            }
+
+            // Durchschnittliche Nachrichten pro Benutzer
+            if (response.TryGetValue("averageMessagesPerUser", out var averageMessagesPerUser) && averageMessagesPerUser != null)
+            {
+                Console.WriteLine($"Durchschnittliche Nachrichten pro Benutzer: {averageMessagesPerUser}");
+            }
+            else
+            {
+                Console.WriteLine("Fehler: Durchschnittliche Nachrichtenanzahl konnte nicht abgerufen werden.");
+            }
+
+            // Top 3 Benutzer mit den meisten Nachrichten
+            if (response.TryGetValue("topUsers", out var topUsersJson) && topUsersJson != null)
+            {
+                // Sichere Verarbeitung von `topUsersJson`
+                var topUsers = JsonSerializer.Deserialize<Dictionary<string, int>>(topUsersJson.ToString() ?? "{}");
+                if (topUsers != null && topUsers.Count > 0)
+                {
+                    Console.WriteLine("Top 3 Benutzer mit den meisten Nachrichten:");
+                    foreach (var user in topUsers)
+                    {
+                        Console.WriteLine($"- {user.Key}: {user.Value} Nachrichten");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Keine Benutzer mit Nachrichten gefunden.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Fehler: Die Top-Benutzer-Daten sind nicht verfügbar.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Fehler beim Abrufen der Statistiken: {ex.Message}");
+        }
+    }
+
+    // Aktualisieren der DisplayStatistics-Methode, um die neue Funktionalität zu verwenden
+    private async Task DisplayStatistics()
+    {
+        await GetStatistics();
     }
 
 
@@ -296,75 +341,6 @@ public class ChatClient
             UsernameColor = usernamecolor
         });
     }
-    //  die Statistik vom Server abzurufen
-private async Task GetStatistics()
-{
-    try
-    {
-        var response = await httpClient.GetFromJsonAsync<Dictionary<string, object>>("/statistics");
-        if (response == null)
-        {
-            Console.WriteLine("Fehler beim Abrufen der Statistiken: Keine Daten erhalten.");
-            return;
-        }
-
-        Console.WriteLine("\n--- Chat-Statistik ---");
-
-        // Gesamtanzahl der gesendeten Nachrichten
-        if (response.TryGetValue("totalMessages", out var totalMessages) && totalMessages != null)
-        {
-            Console.WriteLine($"Gesamtanzahl der gesendeten Nachrichten: {totalMessages}");
-        }
-        else
-        {
-            Console.WriteLine("Fehler: Gesamtanzahl der Nachrichten konnte nicht abgerufen werden.");
-        }
-
-        // Durchschnittliche Nachrichten pro Benutzer
-        if (response.TryGetValue("averageMessagesPerUser", out var averageMessagesPerUser) && averageMessagesPerUser != null)
-        {
-            Console.WriteLine($"Durchschnittliche Nachrichten pro Benutzer: {averageMessagesPerUser}");
-        }
-        else
-        {
-            Console.WriteLine("Fehler: Durchschnittliche Nachrichtenanzahl konnte nicht abgerufen werden.");
-        }
-
-        // Top 3 Benutzer mit den meisten Nachrichten
-        if (response.TryGetValue("topUsers", out var topUsersJson) && topUsersJson != null)
-        {
-            // Sichere Verarbeitung von `topUsersJson`
-            var topUsers = JsonSerializer.Deserialize<Dictionary<string, int>>(topUsersJson.ToString() ?? "{}");
-            if (topUsers != null && topUsers.Count > 0)
-            {
-                Console.WriteLine("Top 3 Benutzer mit den meisten Nachrichten:");
-                foreach (var user in topUsers)
-                {
-                    Console.WriteLine($"- {user.Key}: {user.Value} Nachrichten");
-                }
-            }
-            else
-            {
-                Console.WriteLine("Keine Benutzer mit Nachrichten gefunden.");
-            }
-        }
-        else
-        {
-            Console.WriteLine("Fehler: Die Top-Benutzer-Daten sind nicht verfügbar.");
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Fehler beim Abrufen der Statistiken: {ex.Message}");
-    }
-}
-
-// Aktualisieren der DisplayStatistics-Methode, um die neue Funktionalität zu verwenden
-private async Task DisplayStatistics()
-{
-    await GetStatistics();
-}
-
 
     // Methode des Chat-Verlaufs
 

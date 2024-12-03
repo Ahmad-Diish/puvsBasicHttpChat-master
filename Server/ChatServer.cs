@@ -19,16 +19,15 @@ public class ChatServer
     /// All the chat clients
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ChatMessage>> waitingClients = new();
 
-    /// <summary>
-    /// All the chat clients to check if the name or color of user is already taken or not 
-    /// </summary>
-    private readonly Dictionary<string, ConsoleColor> usernameColors = new();
-
+    // Sammlung der aktuell verbundenen Benutzer (im Speicher)
+    private readonly HashSet<string> activeUsers = new();
     /// The lock object for concurrency
     private readonly object lockObject = new();
 
     // Verlauf
     private readonly string connectionString = "Host=localhost;Port=5432;Username=postgres;Password=0000;Database=postgres";
+
+    private readonly ConcurrentDictionary<string, ConsoleColor> usernameColors = new();
 
     /// Configures the web services.
     /// <param name="app">The application.</param>
@@ -38,6 +37,7 @@ public class ChatServer
 
         app.UseEndpoints(endpoints =>
         {
+            // Endpunkt zur Benutzerregistrierung
             endpoints.MapPost("/messages/id", async context =>
             {
                 var message = await context.Request.ReadFromJsonAsync<ChatMessage>();
@@ -49,25 +49,49 @@ public class ChatServer
                     return;
                 }
 
-                if (usernameColors.ContainsKey(message.Sender) || usernameColors.ContainsValue(message.SenderColor))
+                lock (lockObject)
                 {
-                    context.Response.StatusCode = StatusCodes.Status409Conflict;
-                    Console.WriteLine("Der 'Name' oder 'Farbe' des Benutzers ist bereits vergeben.");
-                    await context.Response.WriteAsync("Name ist bereits vergeben.");
+                    // Überprüft, ob der Benutzername bereits aktiv ist
+                    if (activeUsers.Contains(message.Sender))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status409Conflict;
+                        Console.WriteLine($"Benutzername '{message.Sender}' ist bereits verbunden.");
+                        context.Response.WriteAsync("Name ist bereits vergeben.");
+                        return;
+                    }
+                    else
+                    {
+                        // Fügt den Benutzer zu den aktiven Benutzern hinzu
+                        activeUsers.Add(message.Sender);
+                    }
+                }
+
+                if (await CheckIfUserExists(message.Sender))
+                {
+                    // Benutzer existiert bereits in der Datenbank, Farbe abrufen
+                    var (_, assignedColor) = await GetUserByUsername(message.Sender);
+                    var responseObj = new { AssignedColor = assignedColor.ToString() };
+                    Console.WriteLine($"Client '{message.Sender}' erneut verbunden mit Farbe '{assignedColor}'");
+                    await context.Response.WriteAsJsonAsync(responseObj);
                 }
                 else
                 {
-                    usernameColors[message.Sender] = message.SenderColor;
-                    Console.WriteLine($"Client '{message.Sender}' zur UsernameColorDict hinzugefügt");
-                    await context.Response.WriteAsync("Erfolgreich registriert");
+                    // Generiert eine eindeutige Farbe für den neuen Benutzer
+                    var assignedColor = await GenerateUniqueColor();
+                    await SaveUserToDatabase(message.Sender, assignedColor);
+
+                    var responseObj = new { AssignedColor = assignedColor.ToString() };
+                    Console.WriteLine($"Client '{message.Sender}' zur Datenbank hinzugefügt mit Farbe '{assignedColor}'");
+                    await context.Response.WriteAsJsonAsync(responseObj);
                 }
             });
 
-            // Add new endpoint for user disconnection
+            // Endpunkt zum Abmelden eines Benutzers
             endpoints.MapDelete("/users/{username}", context =>
             {
                 var username = context.Request.RouteValues["username"]?.ToString();
 
+                // Entfernt den Benutzer aus der aktiven Benutzerliste
                 if (string.IsNullOrEmpty(username))
                 {
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -76,9 +100,9 @@ public class ChatServer
 
                 lock (lockObject)
                 {
-                    if (usernameColors.Remove(username))
+                    if (activeUsers.Remove(username))
                     {
-                        Console.WriteLine($"Benutzer '{username}' aus UsernameColorDict entfernt");
+                        Console.WriteLine($"Benutzer '{username}' hat den Chat verlassen.");
                         return context.Response.WriteAsync("Benutzer erfolgreich abgemeldet");
                     }
                 }
@@ -86,11 +110,7 @@ public class ChatServer
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
                 return context.Response.WriteAsync("Benutzer nicht gefunden");
             });
-        });
 
-
-        app.UseEndpoints(endpoints =>
-        {
             // The endpoint to register a client to the server to subsequently receive the next message
             // This endpoint utilizes the Long-Running-Requests pattern.
             endpoints.MapGet("/messages", async context =>
@@ -169,6 +189,9 @@ public class ChatServer
                 try
                 {
                     // Speichere die Nachricht in der Datenbank
+                    var (senderId, senderColor) = await GetUserByUsername(message.Sender);
+                    message.SenderColor = senderColor;
+
                     await SaveMessageToDatabase(message);
                 }
                 catch (Exception ex)
@@ -196,8 +219,7 @@ public class ChatServer
                 await context.Response.WriteAsync("Nachricht empfangen und verarbeitet.");
             });
 
-
-            // Methode des Chat-Verlaufs
+            // Chat History Endpoint
             endpoints.MapGet("/chat/history", async context =>
             {
                 string? username = context.Request.Query["username"];
@@ -214,7 +236,7 @@ public class ChatServer
                 await context.Response.WriteAsJsonAsync(messages);
             });
 
-
+            // Delete Chat History Endpoint
             endpoints.MapDelete("/chat/history", async context =>
             {
                 var username = context.Request.Query["username"].ToString();
@@ -239,7 +261,7 @@ public class ChatServer
                 }
             });
 
-
+            // Get Chat History for Last X Hours Endpoint
             endpoints.MapGet("/chat/hours", async context =>
             {
                 string? hoursStr = context.Request.Query["hours"];
@@ -287,13 +309,11 @@ public class ChatServer
     {
         try
         {
+            var (senderId, _) = await GetUserByUsername(message.Sender);
+
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync();
 
-            // Stelle sicher, dass der Benutzer existiert oder aktualisiere ihn
-            int senderId = await EnsureUserExists(message.Sender, message.SenderColor);
-
-            // Speichere die Nachricht in der Chat-Tabelle
             string query = "INSERT INTO Chat (Content, timestamp, sender_id) VALUES (@content, @timestamp, @sender_id)";
             using var command = new NpgsqlCommand(query, connection);
             command.Parameters.AddWithValue("content", message.Content);
@@ -475,6 +495,88 @@ public class ChatServer
             Console.WriteLine($"Fehler beim Löschen des Chatverlaufs für Benutzer '{username}': {ex.Message}");
             return false;
         }
+    }
+
+
+
+    // Methode zur Überprüfung, ob ein Benutzer in der Datenbank existiert
+    private async Task<bool> CheckIfUserExists(string username)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        string query = "SELECT COUNT(*) FROM Benutzer WHERE Sender = @sender";
+        using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("sender", username);
+
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(result) > 0;
+    }
+
+    // Methode zur Generierung einer eindeutigen Farbe für neue Benutzer
+    private async Task<ConsoleColor> GenerateUniqueColor()
+    {
+        var allColors = Enum.GetValues(typeof(ConsoleColor)).Cast<ConsoleColor>().ToList();
+        var excludedColors = new List<ConsoleColor> { ConsoleColor.Black, ConsoleColor.White, ConsoleColor.Gray };
+        allColors = allColors.Except(excludedColors).ToList();
+
+        List<ConsoleColor> usedColors = new List<ConsoleColor>();
+        using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        // Ruft alle bereits verwendeten Farben aus der Datenbank ab
+        string query = "SELECT sender_color FROM Benutzer";
+        using var command = new NpgsqlCommand(query, connection);
+        using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            if (Enum.TryParse(reader.GetString(0), out ConsoleColor color))
+                usedColors.Add(color);
+        }
+
+        // Bestimmt verfügbare Farben, die noch nicht vergeben sind
+        var availableColors = allColors.Except(usedColors).ToList();
+        if (!availableColors.Any())
+            availableColors = allColors;
+
+        // Wählt zufällig eine verfügbare Farbe aus
+        return availableColors[new Random().Next(availableColors.Count)];
+    }
+
+    // Methode zum Speichern eines neuen Benutzers in der Datenbank
+    private async Task SaveUserToDatabase(string username, ConsoleColor color)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        string query = "INSERT INTO Benutzer (Sender, sender_color) VALUES (@sender, @sender_color)";
+        using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("sender", username);
+        command.Parameters.AddWithValue("sender_color", color.ToString());
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    // Methode zum Abrufen der Benutzer-ID und Farbe anhand des Benutzernamens
+    private async Task<(int UserId, ConsoleColor SenderColor)> GetUserByUsername(string username)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        string query = "SELECT Id, sender_color FROM Benutzer WHERE Sender = @sender";
+        using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("sender", username);
+
+        using var reader = await command.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            int userId = reader.GetInt32(0);
+            if (Enum.TryParse(reader.GetString(1), out ConsoleColor senderColor))
+                return (userId, senderColor);
+        }
+
+        throw new Exception("User not found");
     }
     // Methode zur Berechnung der Statistik 
     private async Task<Dictionary<string, object>> GetChatStatistics()
