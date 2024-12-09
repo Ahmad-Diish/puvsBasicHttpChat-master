@@ -17,9 +17,6 @@ public record RegistrationResponse
 public class ChatClient
 {
     private readonly string connectionString = "Host=localhost;Port=5432;Username=postgres;Password=0000;Database=postgres";
-    private DateTime lastMessageTimestamp = DateTime.MinValue; // Zeitpunkt der letzten Nachricht
-    private string lastMessageContent = string.Empty;         // Inhalt der letzten Nachricht
-    private const int MESSAGE_COOLDOWN_SECONDS = 2;           // Cooldown-Zeit in Sekunden
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
@@ -35,45 +32,6 @@ public class ChatClient
         this.httpClient.BaseAddress = serverUri;
 
     }
-
-
-    // Wörter Filter
-    private List<string> LoadFilterWords()
-    {
-        const string filterFilePath = "woerterfilter.txt";
-
-        // Datei erstellen, falls nicht vorhanden
-        if (!File.Exists(filterFilePath))
-        {
-            File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
-        }
-
-        // Wörter aus der Datei laden
-        return File.ReadAllLines(filterFilePath)
-                   .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
-                   .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
-                   .ToList();
-    }
-
-    private string CensorMessage(string content, out bool wasCensored)
-    {
-        wasCensored = false;
-        var filterWords = LoadFilterWords();
-
-        foreach (var word in filterWords)
-        {
-            if (content.ToLower().Contains(word))
-            {
-                wasCensored = true;
-                var replacement = new string('*', word.Length);
-                content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
-        return content;
-    }
-
-
 
     public async Task<bool> Connect()
     {
@@ -132,35 +90,6 @@ public class ChatClient
 
     public async Task<bool> SendMessage(string content)
     {
-        // Spam-Verhinderung: Cooldown prüfen
-        if ((DateTime.Now - lastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
-        {
-            Console.ForegroundColor = ConsoleColor.Green; // Helle grüne Schrift
-            Console.WriteLine("Bitte warten Sie einen Moment, bevor Sie eine weitere Nachricht senden.");
-            Console.ResetColor();
-            return false;
-        }
-
-        // Doppelte Nachrichten prüfen
-        if (content == lastMessageContent)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow; // Gelbe Schrift für Hinweis
-            Console.WriteLine("Das wiederholte Senden derselben Nachricht ist nicht zulässig.");
-            Console.ResetColor();
-            return false;
-        }
-
-        // Nachricht zensieren
-        bool wasCensored;
-        content = CensorMessage(content, out wasCensored);
-
-        if (wasCensored)
-        {
-            Console.ForegroundColor = ConsoleColor.Red; // Schriftfarbe auf Rot setzen
-            Console.WriteLine("Warnung: Ihre Nachricht enthält unzulässige Wörter, die ersetzt wurden.");
-            Console.ResetColor(); // Zurücksetzen auf Standardfarbe
-        }
-
         //Durch den Befehl „/statistik“ abrufen
         if (content.ToLower() == "/statistik")
         {
@@ -180,21 +109,48 @@ public class ChatClient
 
         if (response.IsSuccessStatusCode)
         {
-            lock (Console.Out)
+            // Rückmeldung vom Server abrufen
+            string serverMessage = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrEmpty(serverMessage))
             {
-                Console.WriteLine("Nachricht erfolgreich gesendet.");
-                Thread.Sleep(100);
+                Console.ForegroundColor = ConsoleColor.Cyan; // Hinweis in Cyan
+                Console.WriteLine($"Server: {serverMessage}");
+                Console.ResetColor();
             }
-            // Letzte Nachricht und Zeitpunkt speichern
-            lastMessageContent = content;
-            lastMessageTimestamp = DateTime.Now;
+            else
+            {
+                lock (Console.Out)
+                {
+                    Console.WriteLine("Nachricht erfolgreich gesendet.");
+                    Thread.Sleep(100);
+                }
+            }
+            return true;
         }
         else
         {
-            Console.WriteLine("Nachricht konnte nicht gesendet werden.");
+            // Fehlerbehandlung: Rückmeldung vom Server anzeigen
+            string errorResponse = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow; // Warnung in Gelb
+                Console.WriteLine($"Warnung vom Server: {errorResponse}");
+                Console.ResetColor();
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                Console.ForegroundColor = ConsoleColor.Red; // Fehler in Rot
+                Console.WriteLine($"Fehler vom Server: {errorResponse}");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"Serverfehler: {response.StatusCode} - {errorResponse}");
+                Console.ResetColor();
+            }
         }
-
-        return response.IsSuccessStatusCode;
+        return false;
     }
 
 

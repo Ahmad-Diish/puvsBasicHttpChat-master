@@ -29,6 +29,10 @@ public class ChatServer
 
     private readonly ConcurrentDictionary<string, ConsoleColor> usernameColors = new();
 
+    private readonly ConcurrentDictionary<string, (string LastMessage, DateTime LastMessageTimestamp)> userMessageHistory = new();
+    private const int MESSAGE_COOLDOWN_SECONDS = 2;
+
+
     /// Configures the web services.
     /// <param name="app">The application.</param>
     public void Configure(IApplicationBuilder app)
@@ -186,6 +190,35 @@ public class ChatServer
 
                 Console.WriteLine($"Nachricht vom Client empfangen: {message.Content}");
 
+                // Spam-Verhinderung: Cooldown prüfen
+                if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
+                {
+                    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                        await context.Response.WriteAsync($"Bitte warten Sie noch {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden.");
+                        return;
+                    }
+
+                    if (message.Content == userHistory.LastMessage)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                        await context.Response.WriteAsync("Das wiederholte Senden derselben Nachricht ist nicht erlaubt.");
+                        return;
+                    }
+
+                    // Nachricht zensieren
+                    bool wasCensored;
+                    message.Content = CensorMessage(message.Content, out wasCensored);
+
+                    if (wasCensored)
+                    {
+                        Console.WriteLine("Nachricht wurde zensiert.");
+                        context.Response.StatusCode = StatusCodes.Status200OK;
+                        await context.Response.WriteAsync("Nachricht wurde gesendet, aber unzulässige Wörter wurden ersetzt.");
+                    }
+                }
+
                 try
                 {
                     // Speichere die Nachricht in der Datenbank
@@ -328,6 +361,42 @@ public class ChatServer
             Console.WriteLine($"Fehler beim Speichern der Nachricht: {ex.Message}");
         }
     }
+
+// Wörter Filter
+    private List<string> LoadFilterWords()
+{
+    const string filterFilePath = "woerterfilter.txt";
+
+    // Datei erstellen, falls nicht vorhanden
+    if (!File.Exists(filterFilePath))
+    {
+        File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
+    }
+
+    // Wörter aus der Datei laden
+    return File.ReadAllLines(filterFilePath)
+               .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
+               .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
+               .ToList();
+}
+
+private string CensorMessage(string content, out bool wasCensored)
+{
+    wasCensored = false;
+    var filterWords = LoadFilterWords();
+
+    foreach (var word in filterWords)
+    {
+        if (content.ToLower().Contains(word))
+        {
+            wasCensored = true;
+            var replacement = new string('*', word.Length);
+            content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    return content;
+}
 
     private async Task<int> EnsureUserExists(string sender, ConsoleColor senderColor)
     {
