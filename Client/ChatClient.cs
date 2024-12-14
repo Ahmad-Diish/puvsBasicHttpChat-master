@@ -16,7 +16,6 @@ public record RegistrationResponse
 /// </summary>
 public class ChatClient
 {
-    private readonly string connectionString = "Host=localhost;Port=5432;Username=postgres;Password=0000;Database=postgres";
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
