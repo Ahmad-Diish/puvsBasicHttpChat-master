@@ -16,6 +16,7 @@ public record RegistrationResponse
 /// </summary>
 public class ChatClient
 {
+    private readonly string connectionString = "Host=localhost;Port=5432;Username=postgres;Password=0000;Database=postgres";
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
@@ -108,48 +109,18 @@ public class ChatClient
 
         if (response.IsSuccessStatusCode)
         {
-            // Rückmeldung vom Server abrufen
-            string serverMessage = await response.Content.ReadAsStringAsync();
-            if (!string.IsNullOrEmpty(serverMessage))
+            lock (Console.Out)
             {
-                Console.ForegroundColor = ConsoleColor.Cyan; // Hinweis in Cyan
-                Console.WriteLine($"Server: {serverMessage}");
-                Console.ResetColor();
+                Console.WriteLine("Nachricht erfolgreich gesendet.");
+                Thread.Sleep(100);
             }
-            else
-            {
-                lock (Console.Out)
-                {
-                    Console.WriteLine("Nachricht erfolgreich gesendet.");
-                    Thread.Sleep(100);
-                }
-            }
-            return true;
         }
         else
         {
-            // Fehlerbehandlung: Rückmeldung vom Server anzeigen
-            string errorResponse = await response.Content.ReadAsStringAsync();
-            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow; // Warnung in Gelb
-                Console.WriteLine($"Warnung vom Server: {errorResponse}");
-                Console.ResetColor();
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
-            {
-                Console.ForegroundColor = ConsoleColor.Red; // Fehler in Rot
-                Console.WriteLine($"Fehler vom Server: {errorResponse}");
-                Console.ResetColor();
-            }
-            else
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Serverfehler: {response.StatusCode} - {errorResponse}");
-                Console.ResetColor();
-            }
+            Console.WriteLine("Nachricht konnte nicht gesendet werden.");
         }
-        return false;
+
+        return response.IsSuccessStatusCode;
     }
 
 

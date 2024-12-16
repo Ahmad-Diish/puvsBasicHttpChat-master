@@ -13,6 +13,14 @@ namespace Server;
 /// There are lot of things to improve...
 public class ChatServer
 {
+    public ChatServer()
+{
+    // Andere Initialisierungen...
+    Console.WriteLine("ChatServer wird gestartet...");
+
+    // Sicherstellen, dass die Datei existiert
+    EnsureFilterFileExists();
+}
     /// The message history
     private readonly ConcurrentQueue<ChatMessage> messageQueue = new();
 
@@ -190,33 +198,36 @@ public class ChatServer
 
                 Console.WriteLine($"Nachricht vom Client empfangen: {message.Content}");
 
-                // Spam-Verhinderung: Cooldown prüfen
-                if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
+// Spam- und Duplikatprüfung
+if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
+{
+    // Überprüfen, ob die Nachricht innerhalb des Cooldown-Zeitraums gesendet wurde
+    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
+    {
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.Response.WriteAsync($"Bitte warten Sie {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden.");
+        return;
+    }
+
+    // Überprüfen, ob die Nachricht die gleiche ist wie die letzte
+    if (message.Content == userHistory.LastMessage)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsync("Das wiederholte Senden derselben Nachricht ist nicht erlaubt.");
+        return;
+    }
+}
+
+// Letzte Nachricht des Benutzers aktualisieren
+userMessageHistory[message.Sender] = (message.Content, DateTime.Now);
+
+                // Nachricht zensieren
+                bool wasCensored;
+                message.Content = CensorMessage(message.Content, out wasCensored);
+
+                if (wasCensored)
                 {
-                    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
-                    {
-                        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                        await context.Response.WriteAsync($"Bitte warten Sie noch {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden.");
-                        return;
-                    }
-
-                    if (message.Content == userHistory.LastMessage)
-                    {
-                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                        await context.Response.WriteAsync("Das wiederholte Senden derselben Nachricht ist nicht erlaubt.");
-                        return;
-                    }
-
-                    // Nachricht zensieren
-                    bool wasCensored;
-                    message.Content = CensorMessage(message.Content, out wasCensored);
-
-                    if (wasCensored)
-                    {
-                        Console.WriteLine("Nachricht wurde zensiert.");
-                        context.Response.StatusCode = StatusCodes.Status200OK;
-                        await context.Response.WriteAsync("Nachricht wurde gesendet, aber unzulässige Wörter wurden ersetzt.");
-                    }
+                    Console.WriteLine("Nachricht wurde zensiert.");
                 }
 
                 try
@@ -383,13 +394,15 @@ public class ChatServer
 private string CensorMessage(string content, out bool wasCensored)
 {
     wasCensored = false;
-    var filterWords = LoadFilterWords();
+    var filterWords = LoadFilterWords(); // Liste mit Filterwörtern aus der Datei
 
     foreach (var word in filterWords)
     {
-        if (content.ToLower().Contains(word))
+        if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
         {
             wasCensored = true;
+
+            // Ersetze die Übereinstimmung mit Sternen (*)
             var replacement = new string('*', word.Length);
             content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
         }
@@ -706,5 +719,16 @@ private string CensorMessage(string content, out bool wasCensored)
 
         return stats;
     }
+// Methode, um sicherzustellen, dass die Datei 'woerterfilter.txt' existiert
+private void EnsureFilterFileExists()
+{
+    const string filterFilePath = "woerterfilter.txt";
+
+    if (!File.Exists(filterFilePath))
+    {
+        File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
+        Console.WriteLine($"Die Datei '{filterFilePath}' wurde erstellt.");
+    }
+}
 
 }
