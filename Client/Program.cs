@@ -151,7 +151,6 @@ namespace Client
                         lock (lockObjectMessageReceivedHandler)
                         {
                             Console.ResetColor();
-                            Console.WriteLine("Nachricht konnte nicht gesendet werden.");
                         }
                     }
                 }

@@ -16,6 +16,7 @@ public record RegistrationResponse
 /// </summary>
 public class ChatClient
 {
+    private readonly string connectionString = "Host=localhost;Port=5432;Username=postgres;Password=0000;Database=postgres";
     private readonly HttpClient httpClient;
     private readonly string alias;
     public ConsoleColor userColor { get; private set; }
@@ -108,57 +109,43 @@ public class ChatClient
 
         if (response.IsSuccessStatusCode)
         {
-            // Rückmeldung vom Server abrufen
-            string serverMessage = await response.Content.ReadAsStringAsync();
-            if (!string.IsNullOrEmpty(serverMessage))
-            {
-                Console.ForegroundColor = ConsoleColor.Red; // Hinweis in Cyan
-                Console.WriteLine($"Server: {serverMessage}");
-                Console.ResetColor();
-            }
-            else
-            {
-                lock (Console.Out)
-                {
-                    Console.WriteLine("Nachricht erfolgreich gesendet.");
-                    Thread.Sleep(100);
-                }
-            }
+            // Standard-Erfolgsfall
+            Console.WriteLine("Nachricht erfolgreich gesendet.");
             return true;
         }
         else
         {
-            // Server-Antwort auslesen, um die genaue Fehlermeldung anzuzeigen
-            string errorMessage = await response.Content.ReadAsStringAsync();
-
-            if (!string.IsNullOrEmpty(errorMessage))
+            // Fehlerantwort verarbeiten
+            var responseContent = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            if (responseContent != null)
             {
-                if ((int)response.StatusCode == 400) // Bad Request
+                if (responseContent.TryGetValue("status", out var status))
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"Fehler: {errorMessage}");
-                    Console.ResetColor();
-                }
-                else if ((int)response.StatusCode == 429) // Too Many Requests
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"Cooldown: {errorMessage}");
-                    Console.ResetColor();
-                }
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"Serverfehler: {errorMessage}");
+                    switch (status)
+                    {
+                        case "spam":
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"Warnung: {responseContent["message"]}");
+                            break;
+
+                        case "duplicate":
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"Fehler: {responseContent["message"]}");
+                            break;
+
+                        default:
+                            Console.WriteLine($"Unbekannter Fehler: {responseContent["message"]}");
+                            break;
+                    }
                     Console.ResetColor();
                 }
             }
             else
             {
-                Console.WriteLine("Nachricht konnte nicht gesendet werden (Unbekannter Fehler).");
+                Console.WriteLine("Fehler beim Verarbeiten der Serverantwort.");
             }
+            return false;
         }
-
-        return false;
     }
 
 

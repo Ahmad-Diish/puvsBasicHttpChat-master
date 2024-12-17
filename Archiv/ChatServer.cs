@@ -2,7 +2,6 @@
 using Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using System.Text.RegularExpressions;
 using Npgsql;
 using System.Threading.Tasks;
 using System.Text;
@@ -14,6 +13,14 @@ namespace Server;
 /// There are lot of things to improve...
 public class ChatServer
 {
+    public ChatServer()
+{
+    // Andere Initialisierungen...
+    Console.WriteLine("ChatServer wird gestartet...");
+
+    // Sicherstellen, dass die Datei existiert
+    EnsureFilterFileExists();
+}
     /// The message history
     private readonly ConcurrentQueue<ChatMessage> messageQueue = new();
 
@@ -31,10 +38,7 @@ public class ChatServer
     private readonly ConcurrentDictionary<string, ConsoleColor> usernameColors = new();
 
     private readonly ConcurrentDictionary<string, (string LastMessage, DateTime LastMessageTimestamp)> userMessageHistory = new();
-
-    const int MESSAGE_COOLDOWN_MILLISECONDS = 100;
-
-
+    private const int MESSAGE_COOLDOWN_SECONDS = 2;
 
 
     /// Configures the web services.
@@ -194,39 +198,45 @@ public class ChatServer
 
                 Console.WriteLine($"Nachricht vom Client empfangen: {message.Content}");
 
-                // Spam-Verhinderung: Cooldown prüfen
+                // Spam- und Duplikatprüfung
                 if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
                 {
-                    // Prüfen, ob der Benutzer innerhalb des Cooldowns (in Millisekunden) eine Nachricht gesendet hat
-                    if ((DateTime.UtcNow - userHistory.LastMessageTimestamp).TotalMilliseconds < MESSAGE_COOLDOWN_MILLISECONDS)
+                    // Überprüfen, ob die Nachricht innerhalb des Cooldown-Zeitraums gesendet wurde
+                    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
                     {
                         context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-                        await context.Response.WriteAsync($"Bitte warten Sie noch {MESSAGE_COOLDOWN_MILLISECONDS / 1000} Sekunde(n), bevor Sie eine weitere Nachricht senden.");
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            status = "spam",
+                            message = $"Bitte warten Sie {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden."
+                        });
                         return;
                     }
 
-                    // Prüfen, ob die aktuelle Nachricht innerhalb der gleichen Sekunde wie die letzte gesendet wurde
-                    if ((DateTime.UtcNow - userHistory.LastMessageTimestamp).TotalMilliseconds < 1000)
+                    // Überprüfen, ob die Nachricht die gleiche ist wie die letzte
+                    if (message.Content == userHistory.LastMessage)
                     {
-                        string currentContent = message.Content.Trim().ToLower();
-
-                        string lastContent = userHistory.LastMessage.Trim().ToLower();
-
-                        // Überprüfen, ob die aktuelle Nachricht identisch zur letzten ist
-                        if (currentContent == lastContent)
+                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                        await context.Response.WriteAsJsonAsync(new
                         {
-                            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                            await context.Response.WriteAsync("Das wiederholte Senden derselben Nachricht in derselben Sekunde ist nicht erlaubt.");
-                            return;
-                        }
+                            status = "duplicate",
+                            message = "Das wiederholte Senden derselben Nachricht ist nicht erlaubt."
+                        });
+                        return;
                     }
                 }
-                // Nachricht zensieren
-                var (censoredMessage, wasCensored) = await CensorMessage(message.Content);
-                message.Content = censoredMessage;
 
-                // Nachricht wurde erfolgreich verarbeitet, Benutzerhistorie aktualisieren
-                userMessageHistory[message.Sender] = (message.Content, DateTime.UtcNow);
+                // Letzte Nachricht des Benutzers aktualisieren
+                userMessageHistory[message.Sender] = (message.Content, DateTime.Now);
+
+                // Nachricht zensieren
+                bool wasCensored;
+                message.Content = CensorMessage(message.Content, out wasCensored);
+
+                if (wasCensored)
+                {
+                    Console.WriteLine("Nachricht wurde zensiert.");
+                }
 
                 try
                 {
@@ -235,25 +245,6 @@ public class ChatServer
                     message.SenderColor = senderColor;
 
                     await SaveMessageToDatabase(message);
-
-                    // Nachricht an alle wartenden Clients senden
-                    lock (this.lockObject)
-                    {
-                        foreach (var (id, client) in this.waitingClients)
-                        {
-                            client.TrySetResult(message);
-                        }
-                    }
-
-                    Console.WriteLine($"Nachricht an alle Clients gesendet: {message.Content}");
-
-                    if (wasCensored)
-                    {
-                        // Rückmeldung an den Benutzer (HTTP-Antwort)
-                        context.Response.StatusCode = StatusCodes.Status201Created;
-                        await context.Response.WriteAsync($"Diese Nachricht wird gefiltert: {message.Content}");
-                    }
-
                 }
                 catch (Exception ex)
                 {
@@ -262,6 +253,22 @@ public class ChatServer
                     await context.Response.WriteAsync("Fehler beim Speichern der Nachricht.");
                     return;
                 }
+
+                // Sende die Nachricht an wartende Clients
+                lock (this.lockObject)
+                {
+                    foreach (var (id, client) in this.waitingClients)
+                    {
+                        Console.WriteLine($"Broadcasting an Client '{id}'");
+                        client.TrySetResult(message);
+                    }
+                }
+
+                Console.WriteLine($"Nachricht an alle Clients gesendet: {message.Content}");
+
+                // Bestätige, dass die Nachricht verarbeitet wurde
+                context.Response.StatusCode = StatusCodes.Status201Created;
+                await context.Response.WriteAsync("Nachricht empfangen und verarbeitet.");
             });
 
             // Chat History Endpoint
@@ -374,77 +381,79 @@ public class ChatServer
         }
     }
 
-    // Methode zum Abrufen der Benutzer-ID und Farbe anhand des Benutzernamens
-    private async Task<(int UserId, ConsoleColor SenderColor)> GetUserByUsername(string username)
+    // Wörter Filter
+    private List<string> LoadFilterWords()
     {
-        using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
+        const string filterFilePath = "woerterfilter.txt";
 
-        string query = "SELECT Id, sender_color FROM Benutzer WHERE Sender = @sender";
-        using var command = new NpgsqlCommand(query, connection);
-        command.Parameters.AddWithValue("sender", username);
-
-        using var reader = await command.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        // Datei erstellen, falls nicht vorhanden
+        if (!File.Exists(filterFilePath))
         {
-            int userId = reader.GetInt32(0);
-            if (Enum.TryParse(reader.GetString(1), out ConsoleColor senderColor))
-                return (userId, senderColor);
+            File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
         }
 
-        throw new Exception("User not found");
+        // Wörter aus der Datei laden
+        return File.ReadAllLines(filterFilePath)
+                   .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
+                   .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
+                   .ToList();
     }
 
-    // Methode zum Wörter Filter
-    private async Task<List<string>> LoadFilterWordsFromDatabase()
+    private string CensorMessage(string content, out bool wasCensored)
     {
-        const string query = "SELECT word FROM badwords";
-        var filterWords = new List<string>();
+        wasCensored = false;
+        var filterWords = LoadFilterWords(); // Liste mit Filterwörtern aus der Datei
 
+        foreach (var word in filterWords)
+        {
+            if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
+            {
+                wasCensored = true;
+
+                // Ersetze die Übereinstimmung mit Sternen (*)
+                var replacement = new string('*', word.Length);
+                content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return content;
+    }
+
+    private async Task<int> EnsureUserExists(string sender, ConsoleColor senderColor)
+    {
         try
         {
             using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync();
 
-            using var command = new NpgsqlCommand(query, connection);
-            using var reader = await command.ExecuteReaderAsync();
+            // Füge den Benutzer ein oder aktualisiere ihn, falls er bereits existiert
+            string query = @"
+            INSERT INTO Benutzer (Sender, sender_color) 
+            VALUES (@sender, @sender_color) 
+            ON CONFLICT (Sender) 
+            DO UPDATE SET sender_color = EXCLUDED.sender_color 
+            RETURNING Id";
 
-            while (await reader.ReadAsync())
+            using var command = new NpgsqlCommand(query, connection);
+            command.Parameters.AddWithValue("sender", sender);
+            command.Parameters.AddWithValue("sender_color", senderColor.ToString());
+
+            var result = await command.ExecuteScalarAsync();
+            if (result is int userId)
             {
-                var word = reader.GetString(0).Trim().ToLower();
-                Console.WriteLine($"Geladenes Filterwort: {word}"); // Debugging-Ausgabe
-                filterWords.Add(word);
+                Console.WriteLine($"Benutzer-ID für '{sender}' ist {userId}.");
+                return userId;
             }
+
+            throw new InvalidOperationException("Benutzer-ID konnte nicht abgerufen werden.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Fehler beim Laden der Filterwörter: {ex.Message}");
+            Console.WriteLine($"Fehler beim Überprüfen oder Hinzufügen des Benutzers: {ex.Message}");
+            throw;
         }
 
-        return filterWords;
-    }
-    private async Task<(string CensoredMessage, bool WasCensored)> CensorMessage(string content)
-    {
-        bool wasCensored = false;
-        var filterWords = await LoadFilterWordsFromDatabase();
 
-        foreach (var word in filterWords)
-        {
-            // Regex für exakte Wortübereinstimmung (unabhängig von Groß-/Kleinschreibung)
-            string pattern = $@"\b{Regex.Escape(word)}\b";
-
-            if (Regex.IsMatch(content, pattern, RegexOptions.IgnoreCase))
-            {
-                wasCensored = true;
-
-                // Ersetzt das gefundene Wort durch Sternchen
-                string replacement = new string('*', word.Length);
-                content = Regex.Replace(content, pattern, replacement, RegexOptions.IgnoreCase);
-            }
-        }
-
-        Console.WriteLine($"Zensierte Nachricht: {content}, Wurde zensiert: {wasCensored}");
-        return (content, wasCensored);
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromDatabase(DateTime? Date = null, string? username = null)
@@ -639,6 +648,26 @@ public class ChatServer
         await command.ExecuteNonQueryAsync();
     }
 
+    // Methode zum Abrufen der Benutzer-ID und Farbe anhand des Benutzernamens
+    private async Task<(int UserId, ConsoleColor SenderColor)> GetUserByUsername(string username)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        string query = "SELECT Id, sender_color FROM Benutzer WHERE Sender = @sender";
+        using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("sender", username);
+
+        using var reader = await command.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            int userId = reader.GetInt32(0);
+            if (Enum.TryParse(reader.GetString(1), out ConsoleColor senderColor))
+                return (userId, senderColor);
+        }
+
+        throw new Exception("User not found");
+    }
     // Methode zur Berechnung der Statistik 
     private async Task<Dictionary<string, object>> GetChatStatistics()
     {
@@ -698,5 +727,16 @@ public class ChatServer
 
         return stats;
     }
+// Methode, um sicherzustellen, dass die Datei 'woerterfilter.txt' existiert
+private void EnsureFilterFileExists()
+{
+    const string filterFilePath = "woerterfilter.txt";
+
+    if (!File.Exists(filterFilePath))
+    {
+        File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
+        Console.WriteLine($"Die Datei '{filterFilePath}' wurde erstellt.");
+    }
+}
 
 }
