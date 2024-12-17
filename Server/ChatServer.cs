@@ -198,28 +198,36 @@ public class ChatServer
 
                 Console.WriteLine($"Nachricht vom Client empfangen: {message.Content}");
 
-// Spam- und Duplikatprüfung
-if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
-{
-    // Überprüfen, ob die Nachricht innerhalb des Cooldown-Zeitraums gesendet wurde
-    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
-    {
-        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await context.Response.WriteAsync($"Bitte warten Sie {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden.");
-        return;
-    }
+                // Spam- und Duplikatprüfung
+                if (userMessageHistory.TryGetValue(message.Sender, out var userHistory))
+                {
+                    // Überprüfen, ob die Nachricht innerhalb des Cooldown-Zeitraums gesendet wurde
+                    if ((DateTime.Now - userHistory.LastMessageTimestamp).TotalSeconds < MESSAGE_COOLDOWN_SECONDS)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            status = "spam",
+                            message = $"Bitte warten Sie {MESSAGE_COOLDOWN_SECONDS} Sekunden, bevor Sie eine weitere Nachricht senden."
+                        });
+                        return;
+                    }
 
-    // Überprüfen, ob die Nachricht die gleiche ist wie die letzte
-    if (message.Content == userHistory.LastMessage)
-    {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-        await context.Response.WriteAsync("Das wiederholte Senden derselben Nachricht ist nicht erlaubt.");
-        return;
-    }
-}
+                    // Überprüfen, ob die Nachricht die gleiche ist wie die letzte
+                    if (message.Content == userHistory.LastMessage)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            status = "duplicate",
+                            message = "Das wiederholte Senden derselben Nachricht ist nicht erlaubt."
+                        });
+                        return;
+                    }
+                }
 
-// Letzte Nachricht des Benutzers aktualisieren
-userMessageHistory[message.Sender] = (message.Content, DateTime.Now);
+                // Letzte Nachricht des Benutzers aktualisieren
+                userMessageHistory[message.Sender] = (message.Content, DateTime.Now);
 
                 // Nachricht zensieren
                 bool wasCensored;
@@ -373,43 +381,43 @@ userMessageHistory[message.Sender] = (message.Content, DateTime.Now);
         }
     }
 
-// Wörter Filter
+    // Wörter Filter
     private List<string> LoadFilterWords()
-{
-    const string filterFilePath = "woerterfilter.txt";
-
-    // Datei erstellen, falls nicht vorhanden
-    if (!File.Exists(filterFilePath))
     {
-        File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
-    }
+        const string filterFilePath = "woerterfilter.txt";
 
-    // Wörter aus der Datei laden
-    return File.ReadAllLines(filterFilePath)
-               .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
-               .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
-               .ToList();
-}
-
-private string CensorMessage(string content, out bool wasCensored)
-{
-    wasCensored = false;
-    var filterWords = LoadFilterWords(); // Liste mit Filterwörtern aus der Datei
-
-    foreach (var word in filterWords)
-    {
-        if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
+        // Datei erstellen, falls nicht vorhanden
+        if (!File.Exists(filterFilePath))
         {
-            wasCensored = true;
-
-            // Ersetze die Übereinstimmung mit Sternen (*)
-            var replacement = new string('*', word.Length);
-            content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
+            File.WriteAllText(filterFilePath, ""); // Leere Datei erstellen
         }
+
+        // Wörter aus der Datei laden
+        return File.ReadAllLines(filterFilePath)
+                   .Where(line => !string.IsNullOrWhiteSpace(line)) // Leere Zeilen ignorieren
+                   .Select(line => line.Trim().ToLower()) // Trim und Kleinschreibung
+                   .ToList();
     }
 
-    return content;
-}
+    private string CensorMessage(string content, out bool wasCensored)
+    {
+        wasCensored = false;
+        var filterWords = LoadFilterWords(); // Liste mit Filterwörtern aus der Datei
+
+        foreach (var word in filterWords)
+        {
+            if (content.Contains(word, StringComparison.OrdinalIgnoreCase))
+            {
+                wasCensored = true;
+
+                // Ersetze die Übereinstimmung mit Sternen (*)
+                var replacement = new string('*', word.Length);
+                content = content.Replace(word, replacement, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return content;
+    }
 
     private async Task<int> EnsureUserExists(string sender, ConsoleColor senderColor)
     {

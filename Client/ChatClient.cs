@@ -109,18 +109,43 @@ public class ChatClient
 
         if (response.IsSuccessStatusCode)
         {
-            lock (Console.Out)
-            {
-                Console.WriteLine("Nachricht erfolgreich gesendet.");
-                Thread.Sleep(100);
-            }
+            // Standard-Erfolgsfall
+            Console.WriteLine("Nachricht erfolgreich gesendet.");
+            return true;
         }
         else
         {
-            Console.WriteLine("Nachricht konnte nicht gesendet werden.");
-        }
+            // Fehlerantwort verarbeiten
+            var responseContent = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            if (responseContent != null)
+            {
+                if (responseContent.TryGetValue("status", out var status))
+                {
+                    switch (status)
+                    {
+                        case "spam":
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"Warnung: {responseContent["message"]}");
+                            break;
 
-        return response.IsSuccessStatusCode;
+                        case "duplicate":
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"Fehler: {responseContent["message"]}");
+                            break;
+
+                        default:
+                            Console.WriteLine($"Unbekannter Fehler: {responseContent["message"]}");
+                            break;
+                    }
+                    Console.ResetColor();
+                }
+            }
+            else
+            {
+                Console.WriteLine("Fehler beim Verarbeiten der Serverantwort.");
+            }
+            return false;
+        }
     }
 
 
