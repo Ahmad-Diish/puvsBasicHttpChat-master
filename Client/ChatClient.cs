@@ -184,7 +184,7 @@ public class ChatClient
             }
             catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                Console.WriteLine("Verbindung zum Chat getrennt.");
+                Console.WriteLine("Verbindung zum Chat erstellen.");
                 break;
             }
         }
